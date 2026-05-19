@@ -9385,6 +9385,7 @@ def ensure_schema():
             "previously_vetted BOOLEAN DEFAULT 0",
             "min_day_rate INTEGER",
             "max_day_rate INTEGER",
+            "current_employer_contact_ok BOOLEAN",
         ]:
             try:
                 conn.execute(text(f"ALTER TABLE candidates ADD COLUMN {coldef}"))
