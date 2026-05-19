@@ -9913,13 +9913,17 @@ def ensure_schema():
             "id_verified BOOLEAN DEFAULT 0",
             "id_verification_method VARCHAR(50)",
             "id_verified_at TIMESTAMP",
+            "qc_assigned_to INTEGER REFERENCES users(id)",
             "qc_status VARCHAR(30) DEFAULT ''",
             "qc_reviewed_by INTEGER REFERENCES users(id)",
             "qc_reviewed_at TIMESTAMP",
             "qc_notes TEXT DEFAULT ''",
+            "referral_approved_by INTEGER REFERENCES users(id)",
+            "referral_approved_at TIMESTAMP",
             "expiry_date TIMESTAMP",
             "verifile_confirmed BOOLEAN DEFAULT FALSE",
             "verifile_confirmed_at TIMESTAMP",
+            "verifile_result TEXT",
         ]:
             try:
                 conn.execute(text(f"ALTER TABLE vetting_check ADD COLUMN {coldef}"))
