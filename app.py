@@ -10267,9 +10267,36 @@ try:
 except Exception:
     pass
 
-# Add new columns that create_all won't add to existing tables
+# Add new columns that create_all won't add to existing tables.
+# Skip any ALTER whose column already exists — one non-blocking catalog read
+# instead of ~60 ACCESS EXCLUSIVE ALTER TABLE statements — so boot does zero
+# locking DDL on an established DB and can't hang behind table locks held by a
+# still-running old deployment during a rolling deploy.
 try:
     with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as _mc:
+        # Fail fast rather than hang if a table is briefly locked.
+        try:
+            _mc.execute(text("SET lock_timeout = '3s'"))
+        except Exception:
+            pass
+        # One catalog read: which (table, column) pairs already exist.
+        _existing_cols = set()
+        try:
+            for _r in _mc.execute(text(
+                "SELECT table_name, column_name FROM information_schema.columns "
+                "WHERE table_schema = 'public'"
+            )):
+                _existing_cols.add((str(_r[0]).lower(), str(_r[1]).lower()))
+        except Exception:
+            _existing_cols = set()
+
+        def _alter_needed(_sql):
+            """True unless this is an ADD COLUMN for a column that already exists."""
+            _m = re.match(r"\s*ALTER TABLE\s+(\w+)\s+ADD COLUMN\s+(\w+)", _sql, re.I)
+            if not _m:
+                return True
+            return (_m.group(1).lower(), _m.group(2).lower()) not in _existing_cols
+
         for _stmt in [
             "ALTER TABLE candidates ADD COLUMN employment_ref_declaration_signed BOOLEAN DEFAULT FALSE",
             "ALTER TABLE candidates ADD COLUMN employment_ref_declaration_signed_at TIMESTAMP",
@@ -10366,15 +10393,18 @@ try:
             "ALTER TABLE employment_history ADD COLUMN company_email VARCHAR(300) DEFAULT ''",
             "ALTER TABLE employment_history ADD COLUMN agency_email VARCHAR(300) DEFAULT ''",
         ]:
+            if not _alter_needed(_stmt):
+                continue
             try:
                 _mc.execute(text(_stmt))
             except Exception:
                 pass
         # assignment_templates — file_content column for DB-stored DOCX
-        try:
-            _mc.execute(text("ALTER TABLE assignment_templates ADD COLUMN file_content BYTEA"))
-        except Exception:
-            pass
+        if _alter_needed("ALTER TABLE assignment_templates ADD COLUMN file_content BYTEA"):
+            try:
+                _mc.execute(text("ALTER TABLE assignment_templates ADD COLUMN file_content BYTEA"))
+            except Exception:
+                pass
 
         # Fix reference request email template — replace HTML with plain text
         try:
