@@ -88,6 +88,10 @@ if not _is_sqlite:
         pool_pre_ping=True,
         pool_recycle=1800,
         pool_timeout=10,
+        # Bound every connection's lock waits to 3s — so boot-time migrations
+        # (and runtime queries) can never hang indefinitely behind a table
+        # lock held by a still-running old deployment.
+        connect_args={"options": "-c lock_timeout=3000"},
     )
 engine = create_engine(DATABASE_URL, **_engine_kwargs)
 Base = declarative_base()
@@ -10258,7 +10262,9 @@ def ensure_schema():
 # ensure_schema() is only needed for legacy databases missing columns —
 # on an established DB it's a no-op (all ALTERs fail silently).
 # Skipping it avoids Postgres table locks that block live requests.
+print("[BOOT] 1/6 create_all start", flush=True)
 Base.metadata.create_all(engine)
+print("[BOOT] 2/6 create_all done", flush=True)
 
 # Ensure vetting_expiry_config table exists (new table, create_all may miss on existing DB)
 try:
@@ -10514,6 +10520,7 @@ Optimus Compliance Team"""))
             pass
 except Exception:
     pass
+print("[BOOT] 3/6 column migrations done", flush=True)
 
 # Rename legacy "PayStream My Max 2 Ltd" → "Paystream" in all DB tables.
 # Runs once per boot; UPDATE ... WHERE is a no-op if no rows match.
@@ -11102,6 +11109,7 @@ try:
     _auto_backfill_clients()
 except Exception:
     pass
+print("[BOOT] 4/6 migration region done", flush=True)
 
 
 # ---------- Taxonomy tagging helpers ----------
@@ -32284,11 +32292,13 @@ def admin_reference_house_delete(house_id):
 # SCHEDULER START
 # =========================================================================
 _scheduler = None
+print("[BOOT] 5/6 scheduler start", flush=True)
 if os.getenv("FLASK_ENV") != "testing":
     try:
         _scheduler = _setup_scheduler()
     except Exception as e:
         print(f"[SCHEDULER] Failed to start: {e}")
+print("[BOOT] 6/6 app import COMPLETE — worker ready", flush=True)
 
 
 if __name__ == "__main__":
