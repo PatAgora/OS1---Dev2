@@ -10426,6 +10426,9 @@ try:
             "ALTER TABLE reference_requests ADD COLUMN reply_doc_id INTEGER",
             "ALTER TABLE employment_history ADD COLUMN company_email VARCHAR(300) DEFAULT ''",
             "ALTER TABLE employment_history ADD COLUMN agency_email VARCHAR(300) DEFAULT ''",
+            # DeclarationRecord model has signable_envelope_id but the table
+            # was missing it — select(DeclarationRecord) 500s without this.
+            "ALTER TABLE declaration_records ADD COLUMN signable_envelope_id VARCHAR(255)",
         ]:
             if not _alter_needed(_stmt):
                 continue
