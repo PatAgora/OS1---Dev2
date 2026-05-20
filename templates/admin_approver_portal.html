@@ -55,7 +55,10 @@
             </thead>
             <tbody>
                 {% for r in rows %}
-                <tr {% if r.is_active is sameas false %}style="opacity:.55;" title="User is deactivated"{% endif %}>
+                {# is_active may come back as False, 0 or NULL — treat any
+                   falsy value as deactivated so Reactivate always shows. #}
+                {% set r_inactive = not r.is_active %}
+                <tr {% if r_inactive %}style="opacity:.55;" title="User is deactivated"{% endif %}>
                     <td>{{ r.user_name or '—' }}</td>
                     <td><small>{{ r.user_email or '' }}</small></td>
                     <td>{{ r.client_name or '—' }}</td>
@@ -78,13 +81,32 @@
                     <td><small class="text-muted">{{ r.allocated_at.strftime('%d %b %Y') if r.allocated_at else '—' }}</small></td>
                     <td><small class="text-muted">{{ r.last_login.strftime('%d %b %Y %H:%M') if r.last_login else 'never' }}</small></td>
                     <td>
-                        {% if r.is_active is sameas false %}
+                        {% if r_inactive %}
                             <span class="badge bg-secondary">Deactivated</span>
                         {% else %}
                             <span class="badge bg-success">Active</span>
                         {% endif %}
                     </td>
                     <td class="text-end" style="white-space:nowrap;">
+                        {# Assign this approver to an engagement — no user picker,
+                           the approver is fixed to this row. #}
+                        <form method="POST" action="{{ url_for('admin_approver_portal_allocate') }}" class="d-inline">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="user_id" value="{{ r.user_id }}">
+                            <select name="engagement_id" class="form-select form-select-sm d-inline-block" style="width:auto;" required>
+                                <option value="">Assign to engagement…</option>
+                                {% for e in engagements %}
+                                <option value="{{ e.id }}">{{ e.client }} — {{ e.name }}</option>
+                                {% endfor %}
+                            </select>
+                            <select name="alloc_role" class="form-select form-select-sm d-inline-block" style="width:auto;">
+                                <option value="primary">Primary</option>
+                                <option value="secondary">Secondary</option>
+                            </select>
+                            <button class="btn btn-sm btn-outline-success" title="Assign this approver to the selected engagement">
+                                <i class="fas fa-link me-1"></i>Assign
+                            </button>
+                        </form>
                         {% if r.alloc_id %}
                         <form method="POST" action="{{ url_for('admin_approver_portal_revoke', alloc_id=r.alloc_id) }}"
                               class="d-inline" onsubmit="return confirm('Revoke {{ r.user_name }}\\'s access to {{ r.eng_name }}? They remain a user — only this engagement allocation is removed.');">
@@ -102,11 +124,11 @@
                                 <i class="fas fa-key"></i>
                             </button>
                         </form>
-                        {% if r.is_active is sameas false %}
+                        {% if r_inactive %}
                             <form method="POST" action="{{ url_for('admin_approver_portal_reactivate', user_id=r.user_id) }}" class="d-inline">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <button class="btn btn-sm btn-outline-success" title="Reactivate user">
-                                    <i class="fas fa-check"></i>
+                                    <i class="fas fa-check me-1"></i>Reactivate
                                 </button>
                             </form>
                         {% else %}

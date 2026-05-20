@@ -4283,7 +4283,13 @@ def admin_approver_portal_create():
     with Session(engine) as s:
         existing = s.scalar(select(User).where(User.email == email))
         if existing:
-            flash(f"A user with email {email} already exists. Allocate them directly instead.", "warning")
+            flash(
+                f"A user with email {email} already exists. If they are listed as "
+                f"an approver above, use the 'Assign to engagement' control on their "
+                f"row. Otherwise that email already belongs to another OS1 account "
+                f"and can't be reused for an approver.",
+                "warning",
+            )
             return redirect(url_for("admin_approver_portal"))
         magic_token = secrets.token_urlsafe(32)
         magic_expires = datetime.datetime.utcnow() + datetime.timedelta(hours=48)
