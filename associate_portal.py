@@ -4019,6 +4019,12 @@ def timesheets():
         sorted_bundles = sorted(monthly_bundles.items(), key=lambda x: x[0], reverse=True)
 
         expense_enabled = config.expense_enabled if config else False
+        # TS 2 — Overtime is hidden by default; an OS1 admin turns it on per
+        # engagement via the timesheet config. When off, drop the overtime
+        # time-types so the OT row never renders on the Associate's grid.
+        overtime_enabled = config.overtime_enabled if config else False
+        if not overtime_enabled:
+            time_types = [t for t in time_types if "overtime" not in (t or "").lower()]
         expense_types_list = []
         if config:
             try:
@@ -4083,6 +4089,7 @@ def timesheets():
             week_days=week_days,
             monthly_bundles=sorted_bundles,
             expense_enabled=expense_enabled,
+            overtime_enabled=overtime_enabled,
             expense_types=expense_types_list,
             expense_categories=expense_categories,
             bank_holidays=bank_holidays,

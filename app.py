@@ -3018,6 +3018,28 @@ def _persist_invoice_pdf(s, invoice, pdf_bytes: bytes, subtype: str = "generated
     return doc.id
 
 
+def _existing_invoice_for_month(s, engagement_id: int, year: int, month: int):
+    """IR 3 — one invoice per (engagement, year, month). Returns an existing
+    non-Void Invoice for the engagement whose billing period falls in the
+    given calendar month, or None. Matches on period_start (auto-generated
+    invoices) and falls back to invoice_date for legacy/manual rows that have
+    no period."""
+    import calendar as _cal
+    month_start = date(year, month, 1)
+    month_end = date(year, month, _cal.monthrange(year, month)[1])
+    for inv in s.scalars(
+        select(Invoice).where(Invoice.engagement_id == engagement_id)
+    ).all():
+        if (inv.status or "").lower() == "void":
+            continue
+        anchor = inv.period_start
+        if anchor is None and inv.invoice_date is not None:
+            anchor = inv.invoice_date.date() if hasattr(inv.invoice_date, "date") else inv.invoice_date
+        if anchor is not None and month_start <= anchor <= month_end:
+            return inv
+    return None
+
+
 @app.route("/admin/invoices/auto-generate/<int:engagement_id>/<int:year>/<int:month>", methods=["POST"])
 @login_required
 def admin_auto_generate_invoice(engagement_id: int, year: int, month: int):
@@ -3030,6 +3052,16 @@ def admin_auto_generate_invoice(engagement_id: int, year: int, month: int):
         eng = s.get(Engagement, engagement_id)
         if not eng:
             abort(404)
+        # IR 3 — one invoice per (engagement, year, month). Refuse a duplicate.
+        existing = _existing_invoice_for_month(s, engagement_id, year, month)
+        if existing:
+            flash(
+                f"An invoice already exists for this project and month "
+                f"({existing.invoice_number}, {existing.status}). "
+                f"Open or void it before generating another.",
+                "warning",
+            )
+            return redirect(url_for("admin_view_invoice", invoice_id=existing.id))
         outstanding = _check_timesheets_ready(s, engagement_id, year, month)
         if outstanding:
             names = ", ".join(f"TS-{r['id']:04d} ({r['status']})" for r in outstanding[:5])
@@ -3171,6 +3203,19 @@ def admin_create_invoice():
             # numbers untouched.
             engagement_id = request.form.get("engagement_id")
             engagement = s.get(Engagement, int(engagement_id)) if engagement_id else None
+            # IR 3 — one invoice per (engagement, year, month). A manual invoice
+            # is dated today, so guard against an existing invoice this month.
+            if engagement_id:
+                _now = datetime.datetime.utcnow()
+                _dup = _existing_invoice_for_month(s, int(engagement_id), _now.year, _now.month)
+                if _dup:
+                    flash(
+                        f"An invoice already exists for this project this month "
+                        f"({_dup.invoice_number}, {_dup.status}). "
+                        f"Open or void it before creating another.",
+                        "warning",
+                    )
+                    return redirect(url_for("admin_view_invoice", invoice_id=_dup.id))
             try:
                 invoice_number = _next_invoice_number(s, engagement)
             except ValueError as exc:
@@ -3293,9 +3338,24 @@ def admin_view_invoice(invoice_id):
         if not invoice:
             flash("Invoice not found", "error")
             return redirect(url_for('admin_invoices'))
-        
+
         line_items = json.loads(invoice.line_items) if invoice.line_items else []
-        return render_template("admin_invoice_view.html", invoice=invoice, line_items=line_items)
+        # IR 19 — surface any manually-overridden fields from the audit log.
+        overridden_fields = []
+        try:
+            last_override = s.scalars(
+                select(AuditLog)
+                .where(AuditLog.event_type == "override")
+                .where(AuditLog.resource_type == "invoice")
+                .where(AuditLog.resource_id == invoice_id)
+                .order_by(AuditLog.id.desc())
+            ).first()
+            if last_override and last_override.details:
+                overridden_fields = json.loads(last_override.details).get("fields", [])
+        except Exception:
+            overridden_fields = []
+        return render_template("admin_invoice_view.html", invoice=invoice,
+                               line_items=line_items, overridden_fields=overridden_fields)
 
 @app.route("/admin/invoices/<int:invoice_id>/edit", methods=["GET", "POST"])
 @login_required
@@ -3307,14 +3367,39 @@ def admin_edit_invoice(invoice_id):
         if not invoice:
             flash("Invoice not found", "error")
             return redirect(url_for('admin_invoices'))
-        
+
+        # IR 31 — a Sent (or otherwise finalised) invoice is locked. It can
+        # only be edited after an admin explicitly re-opens it back to Draft.
+        if (invoice.status or "").lower() != "draft":
+            flash(
+                f"Invoice {invoice.invoice_number} is {invoice.status} and locked. "
+                f"Use Re-open to return it to Draft before editing.",
+                "warning",
+            )
+            return redirect(url_for("admin_view_invoice", invoice_id=invoice_id))
+
         if request.method == "POST":
+            # IR 19/41 — snapshot the pre-edit values so each manual override
+            # can be logged as (field, original, new).
+            _before = {
+                "client_name": invoice.client_name,
+                "engagement_name": invoice.engagement_name,
+                "notes": invoice.notes,
+                "payment_terms": invoice.payment_terms,
+                "due_date": invoice.due_date.strftime("%Y-%m-%d") if invoice.due_date else "",
+                "line_items": invoice.line_items or "[]",
+                "vat_rate": invoice.vat_rate,
+                "subtotal": invoice.subtotal,
+                "vat_amount": invoice.vat_amount,
+                "total_amount": invoice.total_amount,
+            }
+
             # Update invoice fields
             invoice.client_name = request.form.get("client_name", invoice.client_name)
             invoice.engagement_name = request.form.get("engagement_name", invoice.engagement_name)
             invoice.notes = request.form.get("notes", "")
             invoice.payment_terms = request.form.get("payment_terms", "Net 30")
-            
+
             # Parse due date
             due_date_str = request.form.get("due_date", "")
             if due_date_str:
@@ -3322,13 +3407,13 @@ def admin_edit_invoice(invoice_id):
                     invoice.due_date = datetime.datetime.strptime(due_date_str, "%Y-%m-%d")
                 except:
                     pass
-            
+
             # Get line items
             line_items = []
             descriptions = request.form.getlist("item_description[]")
             quantities = request.form.getlist("item_quantity[]")
             rates = request.form.getlist("item_rate[]")
-            
+
             subtotal = 0
             for i, desc in enumerate(descriptions):
                 if desc.strip():
@@ -3342,26 +3427,94 @@ def admin_edit_invoice(invoice_id):
                         "rate": rate,
                         "amount": amount
                     })
-            
+
+            # IR 11/20 — totals are recomputed server-side, never taken from
+            # the form, so any line-item override rolls through automatically.
             invoice.line_items = json.dumps(line_items)
             invoice.subtotal = subtotal
             invoice.vat_rate = float(request.form.get("vat_rate", 20))
             invoice.vat_amount = subtotal * (invoice.vat_rate / 100)
             invoice.total_amount = subtotal + invoice.vat_amount
-            
+
+            # IR 19/41 — diff against the snapshot; record each changed field.
+            _after = {
+                "client_name": invoice.client_name,
+                "engagement_name": invoice.engagement_name,
+                "notes": invoice.notes,
+                "payment_terms": invoice.payment_terms,
+                "due_date": invoice.due_date.strftime("%Y-%m-%d") if invoice.due_date else "",
+                "line_items": invoice.line_items or "[]",
+                "vat_rate": invoice.vat_rate,
+                "subtotal": invoice.subtotal,
+                "vat_amount": invoice.vat_amount,
+                "total_amount": invoice.total_amount,
+            }
+            overrides = [
+                {"field": k, "original": _before[k], "new": _after[k]}
+                for k in _after if _before.get(k) != _after.get(k)
+            ]
+
             s.commit()
-            
-            log_audit_event('update', 'billing', f'Updated invoice {invoice.invoice_number}',
-                          'invoice', invoice.id)
-            
-            flash(f"✅ Invoice updated successfully!", "success")
+
+            if overrides:
+                changed = ", ".join(o["field"] for o in overrides)
+                log_audit_event(
+                    "override", "billing",
+                    f"Manually overrode invoice {invoice.invoice_number}: {changed}",
+                    "invoice", invoice.id,
+                    {"fields": overrides},
+                )
+            else:
+                log_audit_event("update", "billing",
+                                f"Edited invoice {invoice.invoice_number} (no field changes)",
+                                "invoice", invoice.id)
+
+            flash(
+                f"✅ Invoice updated — {len(overrides)} field(s) overridden."
+                if overrides else "✅ Invoice saved (no changes).",
+                "success",
+            )
             return redirect(url_for('admin_view_invoice', invoice_id=invoice.id))
         
         # GET - show edit form
         line_items = json.loads(invoice.line_items) if invoice.line_items else []
         engagements = s.scalars(select(Engagement).order_by(Engagement.name)).all()
-        return render_template("admin_invoice_edit.html", invoice=invoice, 
+        return render_template("admin_invoice_edit.html", invoice=invoice,
                              line_items=line_items, engagements=engagements)
+
+
+@app.route("/admin/invoices/<int:invoice_id>/reopen", methods=["POST"])
+@login_required
+def admin_reopen_invoice(invoice_id: int):
+    """IR 31 — admin re-opens a Sent/Overdue invoice back to Draft so it can
+    be edited. Void and Paid invoices are not re-openable. Audit-logged."""
+    if (current_user.role or "").lower() != "admin":
+        flash("Admin access required.", "danger")
+        return redirect(url_for("admin_invoices"))
+    with Session(engine) as s:
+        invoice = s.get(Invoice, invoice_id)
+        if not invoice:
+            flash("Invoice not found.", "warning")
+            return redirect(url_for("admin_invoices"))
+        old_status = (invoice.status or "")
+        if old_status.lower() not in ("sent", "overdue"):
+            flash(
+                f"Only Sent or Overdue invoices can be re-opened "
+                f"(this one is {old_status or 'Draft'}).",
+                "warning",
+            )
+            return redirect(url_for("admin_view_invoice", invoice_id=invoice_id))
+        invoice.status = "Draft"
+        s.commit()
+        try:
+            log_audit_event("reopen", "billing",
+                            f"Invoice {invoice.invoice_number} re-opened for editing (was {old_status})",
+                            "invoice", invoice.id, {"old_status": old_status})
+        except Exception:
+            pass
+    flash(f"Invoice {invoice.invoice_number} re-opened — it is now Draft and editable.", "success")
+    return redirect(url_for("admin_edit_invoice", invoice_id=invoice_id))
+
 
 @app.route("/admin/invoices/<int:invoice_id>/status", methods=["POST"])
 @login_required
@@ -3622,6 +3775,22 @@ def _generate_invoice_pdf(invoice, line_items):
         pdf.set_font("Helvetica", "", 9)
         pdf.set_text_color(107, 114, 128)
         pdf.multi_cell(0, 5, _safe(invoice.notes))
+
+    # IR 12 — mandated payment instruction.
+    pdf.ln(12)
+    pdf.set_draw_color(229, 231, 235)
+    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+    pdf.ln(6)
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_text_color(55, 65, 81)
+    pdf.cell(0, 6, "Payment Instructions", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(107, 114, 128)
+    pdf.multi_cell(0, 5, _safe(
+        "Payment to be made within 30 days of invoice date. Please reference "
+        "the invoice number when making payment. For queries contact "
+        "finance@optimussolutions.co.uk."
+    ))
 
     # Footer
     pdf.ln(16)

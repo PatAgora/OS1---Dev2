@@ -160,9 +160,19 @@
             <i class="fas fa-arrow-left me-1"></i> Back
         </a>
         <div class="action-buttons">
+            {% if invoice.status == 'Draft' %}
             <a href="{{ url_for('admin_edit_invoice', invoice_id=invoice.id) }}" class="btn btn-outline-primary">
                 <i class="fas fa-edit me-1"></i> Edit
             </a>
+            {% elif invoice.status in ['Sent', 'Overdue'] %}
+            <form method="POST" action="{{ url_for('admin_reopen_invoice', invoice_id=invoice.id) }}" class="d-inline"
+                  onsubmit="return confirm('Re-open this invoice? It will return to Draft so it can be edited.')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-outline-primary">
+                    <i class="fas fa-lock-open me-1"></i> Re-open to Edit
+                </button>
+            </form>
+            {% endif %}
             <a href="{{ url_for('admin_invoice_pdf', invoice_id=invoice.id) }}" class="btn btn-outline-secondary">
                 <i class="fas fa-file-pdf me-1"></i> Download PDF
             </a>
@@ -200,6 +210,24 @@
         </div>
     </div>
 </div>
+
+{% if overridden_fields %}
+<div class="no-print alert alert-warning mb-4">
+    <strong><i class="fas fa-flag me-1"></i> Manually overridden</strong>
+    — this invoice was edited after generation. The following field(s) differ
+    from the system-generated values:
+    <ul class="mb-0 mt-2">
+        {% for o in overridden_fields %}
+        <li>
+            <strong>{{ o.field|replace('_', ' ')|title }}</strong>:
+            <span class="text-muted">{{ o.original if o.original not in (None, '') else '—' }}</span>
+            &rarr;
+            <span>{{ o.new if o.new not in (None, '') else '—' }}</span>
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
 
 <div class="invoice-container">
     <div class="invoice-header">

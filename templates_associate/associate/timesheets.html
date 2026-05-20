@@ -110,7 +110,8 @@
                             <td style="text-align: center; font-weight: 600;" class="row-total" id="total_{{ loop.index0 }}">0</td>
                         </tr>
                         {% endfor %}
-                        <!-- Overtime Multiplier row -->
+                        <!-- Overtime Multiplier row — TS 2: only when OT is enabled for this engagement -->
+                        {% if overtime_enabled %}
                         <tr style="background: #fffbeb;">
                             <td style="font-weight: 600; white-space: nowrap;">OT Multiplier</td>
                             {% for day in week_days %}
@@ -128,6 +129,7 @@
                             {% endfor %}
                             <td></td>
                         </tr>
+                        {% endif %}
                         <!-- Billable row -->
                         <tr style="background: var(--color-gray-50); font-weight: 700;">
                             <td>Billable Days</td>
@@ -143,6 +145,7 @@
                             {% endfor %}
                             <td style="text-align: center; color: var(--color-success);" id="totalDayAmount">&pound;0.00</td>
                         </tr>
+                        {% if overtime_enabled %}
                         <tr style="background: #eff6ff; font-weight: 700;">
                             <td>OT Amount</td>
                             {% for day in week_days %}
@@ -150,6 +153,7 @@
                             {% endfor %}
                             <td style="text-align: center; color: #1d4ed8;" id="totalOTAmount">&pound;0.00</td>
                         </tr>
+                        {% endif %}
                         <tr style="background: var(--color-gray-50); font-weight: 700; border-top: 2px solid var(--color-gray-300);">
                             <td>Day Amount</td>
                             {% for day in week_days %}
@@ -166,7 +170,8 @@
             </div>
             {% endif %}
 
-            <!-- Expenses -->
+            <!-- Expenses — TS 2: only when expenses are enabled for this engagement -->
+            {% if expense_enabled %}
             <div style="padding: 16px 20px; border-top: 1px solid var(--color-gray-200);">
                 <div class="fw-semibold mb-2" style="font-size: 13px;"><i class="fas fa-receipt me-1"></i>Expenses</div>
                 <div id="expenseRows">
@@ -206,6 +211,7 @@
                     Expenses total: <span id="expenseTotalDisplay">&pound;0.00</span>
                 </div>
             </div>
+            {% endif %}
 
             <!-- Summary Panel -->
             <div style="padding: 20px; border-top: 2px solid var(--color-gray-200); display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 16px;">
