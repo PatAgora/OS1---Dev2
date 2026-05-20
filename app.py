@@ -91,7 +91,7 @@ if not _is_sqlite:
         # Bound every connection's lock waits to 3s — so boot-time migrations
         # (and runtime queries) can never hang indefinitely behind a table
         # lock held by a still-running old deployment.
-        connect_args={"options": "-c lock_timeout=3000"},
+        connect_args={"connect_timeout": 10, "options": "-c lock_timeout=3000"},
     )
 engine = create_engine(DATABASE_URL, **_engine_kwargs)
 Base = declarative_base()
@@ -10262,8 +10262,36 @@ def ensure_schema():
 # ensure_schema() is only needed for legacy databases missing columns —
 # on an established DB it's a no-op (all ALTERs fail silently).
 # Skipping it avoids Postgres table locks that block live requests.
+# create_all hung the gunicorn boot, so it is now skipped entirely on an
+# established DB (where every table already exists) and only runs on a
+# genuinely fresh database.
 print("[BOOT] 1/6 create_all start", flush=True)
-Base.metadata.create_all(engine)
+_has_core = None
+try:
+    with engine.connect() as _bc:
+        print("[BOOT] 1a DB connection established", flush=True)
+        _bc.execute(text("SELECT 1"))
+        print("[BOOT] 1b DB query OK", flush=True)
+        if _is_sqlite:
+            _has_core = _bc.execute(text(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='users' LIMIT 1"
+            )).first()
+        else:
+            _has_core = _bc.execute(text(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema='public' AND table_name='users' LIMIT 1"
+            )).first()
+        print(f"[BOOT] 1c core tables present={bool(_has_core)}", flush=True)
+except Exception as _be:
+    print(f"[BOOT] 1! DB connection check failed: {_be!r}", flush=True)
+try:
+    if not _has_core:
+        Base.metadata.create_all(engine)
+        print("[BOOT] 1d create_all ran (fresh/unknown DB)", flush=True)
+    else:
+        print("[BOOT] 1d established DB — create_all skipped", flush=True)
+except Exception as _be2:
+    print(f"[BOOT] 1! create_all failed: {_be2!r}", flush=True)
 print("[BOOT] 2/6 create_all done", flush=True)
 
 # Ensure vetting_expiry_config table exists (new table, create_all may miss on existing DB)
