@@ -31508,6 +31508,12 @@ def _setup_scheduler():
                              id='ts_associate_reminder_chase')
     def ts_associate_reminder_chase():
         """TS 22 — Monday 12:00 + Tuesday 09:00 chase for previous WC."""
+        # The cron is scheduled mon,tue @ 9,12 — narrow to exactly Mon 12:00
+        # and Tue 09:00 so associates aren't chased at Mon 09:00 / Tue 12:00.
+        _now = datetime.datetime.now()
+        if not ((_now.weekday() == 0 and _now.hour == 12)      # Mon 12:00
+                or (_now.weekday() == 1 and _now.hour == 9)):  # Tue 09:00
+            return
         with app.app_context():
             try:
                 today = datetime.date.today()

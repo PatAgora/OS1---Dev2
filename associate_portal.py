@@ -4724,27 +4724,14 @@ def timesheets_save():
             ts.billable_days = total_days
             ts.billable_hours = total_hours
 
-        # Save expenses
+        # Expenses are owned solely by the add/edit/delete-expense routes —
+        # never delete+recreate them here (that would drop the category, VAT,
+        # date, mileage and receipt captured by those routes). Just recompute
+        # the timesheet's expense total from the live rows.
         expense_total = 0
         if TimesheetExpense:
-            s.query(TimesheetExpense).filter_by(timesheet_id=ts.id).delete()
-            exp_types = request.form.getlist("expense_type[]")
-            exp_dates = request.form.getlist("expense_date[]")
-            exp_amounts = request.form.getlist("expense_amount[]")
-            for i in range(len(exp_amounts)):
-                try:
-                    amt = float(exp_amounts[i]) if exp_amounts[i] else 0
-                except ValueError:
-                    amt = 0
-                if amt > 0:
-                    exp = TimesheetExpense(
-                        timesheet_id=ts.id,
-                        expense_type=exp_types[i] if i < len(exp_types) else "Other",
-                        description=exp_types[i] if i < len(exp_types) else "Other",
-                        amount=amt,
-                    )
-                    s.add(exp)
-                    expense_total += amt
+            exp_rows = s.query(TimesheetExpense).filter_by(timesheet_id=ts.id).all()
+            expense_total = sum(float(r.amount or 0) for r in exp_rows)
 
         # Calculate totals
         day_rate = getattr(ts, "day_rate", 0) or 0
@@ -4835,28 +4822,13 @@ def timesheets_submit():
             ts.billable_days = total_days
             ts.billable_hours = total_hours
 
-        # Save expenses from the inline expense rows
+        # Expenses are owned solely by the add/edit/delete-expense routes —
+        # never delete+recreate them here. Recompute the total from live rows.
         TimesheetExpense = _portal_model("TimesheetExpense")
         expense_total = 0
         if TimesheetExpense:
-            s.query(TimesheetExpense).filter_by(timesheet_id=ts.id).delete()
-            exp_types = request.form.getlist("expense_type[]")
-            exp_dates = request.form.getlist("expense_date[]")
-            exp_amounts = request.form.getlist("expense_amount[]")
-            for i in range(len(exp_amounts)):
-                try:
-                    amt = float(exp_amounts[i]) if exp_amounts[i] else 0
-                except ValueError:
-                    amt = 0
-                if amt > 0:
-                    exp = TimesheetExpense(
-                        timesheet_id=ts.id,
-                        expense_type=exp_types[i] if i < len(exp_types) else "Other",
-                        description=exp_types[i] if i < len(exp_types) else "Other",
-                        amount=amt,
-                    )
-                    s.add(exp)
-                    expense_total += amt
+            exp_rows = s.query(TimesheetExpense).filter_by(timesheet_id=ts.id).all()
+            expense_total = sum(float(r.amount or 0) for r in exp_rows)
 
         # Calculate totals
         day_rate = getattr(ts, "day_rate", 0) or 0
@@ -5688,7 +5660,8 @@ def timesheets_delete_expense(expense_id):
             flash("Timesheet not found.", "danger")
             return redirect(url_for("associate.timesheets"))
 
-        if ts.status not in ("Draft", "Unsubmitted", None, ""):
+        # TS 5/27 — Rejected timesheets unlock for editing, same as Draft.
+        if (ts.status or "").lower() not in ("draft", "unsubmitted", "rejected", ""):
             flash("Cannot delete expenses from submitted timesheets.", "warning")
             return redirect(url_for("associate.timesheets"))
 

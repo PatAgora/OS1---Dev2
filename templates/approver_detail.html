@@ -116,7 +116,7 @@
                     <td class="text-end">£{{ '%.2f' % (x.vat_amount or 0) }}</td>
                     <td>
                         {% if x.receipt_doc_id %}
-                            <a href="{{ url_for('document_download', doc_id=x.receipt_doc_id) }}" target="_blank">
+                            <a href="{{ url_for('download_document', doc_id=x.receipt_doc_id) }}" target="_blank">
                                 <i class="fas fa-paperclip me-1"></i>View
                             </a>
                         {% else %}<span class="text-muted">—</span>{% endif %}

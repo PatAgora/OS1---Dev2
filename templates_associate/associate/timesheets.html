@@ -170,48 +170,11 @@
             </div>
             {% endif %}
 
-            <!-- Expenses — TS 2: only when expenses are enabled for this engagement -->
-            {% if expense_enabled %}
-            <div style="padding: 16px 20px; border-top: 1px solid var(--color-gray-200);">
-                <div class="fw-semibold mb-2" style="font-size: 13px;"><i class="fas fa-receipt me-1"></i>Expenses</div>
-                <div id="expenseRows">
-                    {% for exp in expenses %}
-                    <div class="row g-2 mb-2 expense-row">
-                        <div class="col-md-3">
-                            <select name="expense_type[]" class="form-select form-select-sm">
-                                <option value="Travel" {% if exp.description == 'Travel' %}selected{% endif %}>Travel</option>
-                                <option value="Accommodation" {% if exp.description == 'Accommodation' %}selected{% endif %}>Accommodation</option>
-                                <option value="Meals" {% if exp.description == 'Meals' %}selected{% endif %}>Meals</option>
-                                <option value="Parking" {% if exp.description == 'Parking' %}selected{% endif %}>Parking</option>
-                                <option value="Equipment" {% if exp.description == 'Equipment' %}selected{% endif %}>Equipment</option>
-                                <option value="Other" {% if exp.description == 'Other' %}selected{% endif %}>Other</option>
-                            </select>
-                        </div>
-                        <div class="col-md-3">
-                            <input type="date" name="expense_date[]" class="form-control form-control-sm" value="{{ exp.entry_date.strftime('%Y-%m-%d') if exp.entry_date else '' }}">
-                        </div>
-                        <div class="col-md-3">
-                            <div class="input-group input-group-sm">
-                                <span class="input-group-text">&pound;</span>
-                                <input type="number" name="expense_amount[]" class="form-control expense-amt" step="0.01" min="0" value="{{ '%.2f'|format(exp.value) if exp.value else '' }}" placeholder="0.00">
-                            </div>
-                        </div>
-                        <div class="col-md-3">
-                            <button type="button" class="btn btn-sm btn-outline-danger" onclick="this.closest('.expense-row').remove(); updateExpenseTotal();">
-                                <i class="fas fa-times"></i>
-                            </button>
-                        </div>
-                    </div>
-                    {% endfor %}
-                </div>
-                <button type="button" class="btn btn-sm btn-outline-primary mt-1" onclick="addExpenseRow()">
-                    <i class="fas fa-plus me-1"></i> Add expense
-                </button>
-                <div class="mt-2 fw-semibold" style="font-size:13px;">
-                    Expenses total: <span id="expenseTotalDisplay">&pound;0.00</span>
-                </div>
-            </div>
-            {% endif %}
+            {# Expenses are entered, edited and removed in the dedicated
+               Expenses card below — see the {% if expense_enabled %} block.
+               The old inline expense rows were removed because saving the
+               timesheet rebuilt them and dropped the category / VAT / receipt
+               captured by the proper Add Expense form. #}
 
             <!-- Summary Panel -->
             <div style="padding: 20px; border-top: 2px solid var(--color-gray-200); display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 16px;">
@@ -268,7 +231,8 @@
 
 <!-- Expenses -->
 {% if expense_enabled %}
-<div class="portal-card mb-4">
+{% set ts_editable = current_ts and (current_ts.status in ('Draft', 'Unsubmitted', None, '') or current_ts.status == 'Rejected') %}
+<div class="portal-card mb-4" data-expense-count="{{ expenses|length if expenses else 0 }}" data-expense-net="{{ '%.2f'|format(expenses|sum(attribute='amount') if expenses else 0) }}">
     <div class="portal-card-header">
         <h2><i class="fas fa-receipt me-2"></i>Expenses</h2>
     </div>
@@ -276,25 +240,58 @@
         {% if expenses %}
         <table class="portal-table mb-3">
             <thead>
-                <tr><th>Type</th><th>Description</th><th>Amount</th></tr>
+                <tr>
+                    <th>Category</th><th>Description</th><th>Date</th>
+                    <th class="text-end">Net</th><th class="text-end">VAT&nbsp;%</th><th class="text-end">VAT</th>
+                    <th>Receipt</th>{% if ts_editable %}<th class="text-end">Actions</th>{% endif %}
+                </tr>
             </thead>
             <tbody>
                 {% for exp in expenses %}
                 <tr>
-                    <td>{{ exp.expense_type }}</td>
+                    <td>{{ exp.expense_type }}{% if exp.distance_miles %} <span class="text-muted">({{ exp.distance_miles }} mi)</span>{% endif %}</td>
                     <td>{{ exp.description or '' }}</td>
-                    <td>&pound;{{ "%.2f"|format(exp.amount or 0) }}</td>
+                    <td>{{ exp.date_of_expense.strftime('%d/%m/%Y') if exp.date_of_expense else '—' }}</td>
+                    <td class="text-end">&pound;{{ "%.2f"|format(exp.amount or 0) }}</td>
+                    <td class="text-end">{{ '%.0f'|format(exp.vat_rate_pct or 0) }}%</td>
+                    <td class="text-end">&pound;{{ "%.2f"|format(exp.vat_amount or 0) }}</td>
+                    <td>
+                        {% if exp.receipt_doc_id %}
+                        <a href="{{ url_for('download_document', doc_id=exp.receipt_doc_id) }}" target="_blank">View</a>
+                        {% else %}<span class="text-muted">—</span>{% endif %}
+                    </td>
+                    {% if ts_editable %}
+                    <td class="text-end" style="white-space:nowrap;">
+                        <button type="button" class="btn btn-sm btn-outline-secondary"
+                                title="Edit"
+                                data-edit-url="{{ url_for('associate.timesheets_edit_expense', expense_id=exp.id) }}"
+                                data-cat-id="{{ exp.expense_category_id or '' }}"
+                                data-date="{{ exp.date_of_expense.strftime('%Y-%m-%d') if exp.date_of_expense else '' }}"
+                                data-amount="{{ '%.2f'|format(exp.amount or 0) }}"
+                                data-distance="{{ exp.distance_miles or '' }}"
+                                data-description="{{ exp.description or '' }}"
+                                onclick="editExpense(this)">
+                            <i class="fas fa-pen"></i>
+                        </button>
+                        <form method="POST" action="{{ url_for('associate.timesheets_delete_expense', expense_id=exp.id) }}"
+                              class="d-inline" onsubmit="return confirm('Remove this expense line?');">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove"><i class="fas fa-times"></i></button>
+                        </form>
+                    </td>
+                    {% endif %}
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
         {% endif %}
 
-        <!-- P6: Expense input form -->
-        {% if current_ts and current_ts.status in ('Draft', 'Unsubmitted', None, '') %}
+        <!-- Expense add / edit form -->
+        {% if ts_editable %}
         <div class="mt-3 p-3" style="background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb;">
-            <h4 style="font-size:14px;margin:0 0 12px;"><i class="fas fa-plus-circle me-1"></i> Add Expense</h4>
-            <form method="POST" action="{{ url_for('associate.timesheets_add_expense') }}" enctype="multipart/form-data" id="addExpenseForm">
+            <h4 style="font-size:14px;margin:0 0 12px;" id="expenseFormHeading"><i class="fas fa-plus-circle me-1"></i> Add Expense</h4>
+            <form method="POST" action="{{ url_for('associate.timesheets_add_expense') }}" enctype="multipart/form-data" id="addExpenseForm"
+                  data-add-action="{{ url_for('associate.timesheets_add_expense') }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="timesheet_id" value="{{ current_ts.id }}">
                 {# Phase 2 — category dropdown (TS 12 / TS 24). Mileage swaps
@@ -343,12 +340,16 @@
                         <label class="form-label" style="font-size:12px;">Description</label>
                         <input type="text" name="expense_description" class="form-control form-control-sm" placeholder="Brief description">
                     </div>
-                    <div class="col-md-2">
+                    <div class="col-md-2" id="expenseReceiptWrapper">
                         <label class="form-label" style="font-size:12px;">Receipt</label>
                         <input type="file" name="expense_receipt" class="form-control form-control-sm" accept=".pdf,.jpg,.jpeg,.png">
                     </div>
                     <div class="col-md-1">
-                        <button type="submit" class="btn btn-sm btn-primary w-100"><i class="fas fa-plus"></i></button>
+                        <button type="submit" class="btn btn-sm btn-primary w-100" id="expenseSubmitBtn"><i class="fas fa-plus"></i></button>
+                    </div>
+                    <div class="col-md-1">
+                        <button type="button" class="btn btn-sm btn-outline-secondary w-100" id="cancelEditExpense"
+                                style="display:none;" onclick="cancelEditExpense()">Cancel</button>
                     </div>
                 </div>
             </form>
@@ -390,7 +391,7 @@
             </script>
         </div>
         {% else %}
-        <p class="text-muted text-sm mt-2">Expenses can be added when a draft timesheet is active.</p>
+        <p class="text-muted text-sm mt-2">Expenses can be added or changed while the timesheet is a draft, or after it has been returned for amendment.</p>
         {% endif %}
     </div>
 </div>
@@ -589,41 +590,54 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function calcExpenseTotal() {
-    var total = 0;
-    document.querySelectorAll('.expense-amt').forEach(function(inp) {
-        total += parseFloat(inp.value) || 0;
-    });
-    var disp = document.getElementById('expenseTotalDisplay');
-    if (disp) disp.textContent = '\u00a3' + total.toFixed(2);
-    return total;
+    // Expenses are managed in the dedicated Expenses card; the server-rendered
+    // net total is exposed there as data-expense-net.
+    var card = document.querySelector('[data-expense-net]');
+    return card ? (parseFloat(card.dataset.expenseNet) || 0) : 0;
 }
 
-function updateExpenseTotal() {
-    calcExpenseTotal();
-    var recalcBtn = document.querySelector('.ts-input');
-    if (recalcBtn) recalcBtn.dispatchEvent(new Event('change'));
+// Repopulate the Add Expense form to edit an existing line (TS 27).
+function editExpense(btn) {
+    var form = document.getElementById('addExpenseForm');
+    if (!form) return;
+    form.action = btn.dataset.editUrl;
+    var sel = document.getElementById('expenseCategorySelect');
+    if (sel) { sel.value = btn.dataset.catId || ''; sel.dispatchEvent(new Event('change')); }
+    var dt = form.querySelector('input[name="expense_date"]');
+    if (dt) dt.value = btn.dataset.date || '';
+    var amt = document.getElementById('expenseAmount');
+    if (amt) amt.value = btn.dataset.amount || '';
+    var dist = document.getElementById('expenseDistance');
+    if (dist) dist.value = btn.dataset.distance || '';
+    var desc = form.querySelector('input[name="expense_description"]');
+    if (desc) desc.value = btn.dataset.description || '';
+    var heading = document.getElementById('expenseFormHeading');
+    if (heading) heading.innerHTML = '<i class="fas fa-pen me-1"></i> Edit Expense';
+    var sub = document.getElementById('expenseSubmitBtn');
+    if (sub) sub.innerHTML = '<i class="fas fa-check"></i>';
+    var cancel = document.getElementById('cancelEditExpense');
+    if (cancel) cancel.style.display = '';
+    // The receipt can't be swapped on edit \u2014 hide the field to avoid confusion.
+    var rcpt = document.getElementById('expenseReceiptWrapper');
+    if (rcpt) rcpt.style.display = 'none';
+    form.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
-function addExpenseRow() {
-    var container = document.getElementById('expenseRows');
-    var row = document.createElement('div');
-    row.className = 'row g-2 mb-2 expense-row';
-    row.innerHTML = '<div class="col-md-3">' +
-        '<select name="expense_type[]" class="form-select form-select-sm">' +
-        '<option value="Travel">Travel</option>' +
-        '<option value="Accommodation">Accommodation</option>' +
-        '<option value="Meals">Meals</option>' +
-        '<option value="Parking">Parking</option>' +
-        '<option value="Equipment">Equipment</option>' +
-        '<option value="Other">Other</option>' +
-        '</select></div>' +
-        '<div class="col-md-3"><input type="date" name="expense_date[]" class="form-control form-control-sm"></div>' +
-        '<div class="col-md-3"><div class="input-group input-group-sm">' +
-        '<span class="input-group-text">&pound;</span>' +
-        '<input type="number" name="expense_amount[]" class="form-control expense-amt" step="0.01" min="0" placeholder="0.00" oninput="updateExpenseTotal()">' +
-        '</div></div>' +
-        '<div class="col-md-3"><button type="button" class="btn btn-sm btn-outline-danger" onclick="this.closest(\'.expense-row\').remove(); updateExpenseTotal();"><i class="fas fa-times"></i></button></div>';
-    container.appendChild(row);
+function cancelEditExpense() {
+    var form = document.getElementById('addExpenseForm');
+    if (!form) return;
+    form.action = form.dataset.addAction;
+    form.reset();
+    var sel = document.getElementById('expenseCategorySelect');
+    if (sel) sel.dispatchEvent(new Event('change'));
+    var heading = document.getElementById('expenseFormHeading');
+    if (heading) heading.innerHTML = '<i class="fas fa-plus-circle me-1"></i> Add Expense';
+    var sub = document.getElementById('expenseSubmitBtn');
+    if (sub) sub.innerHTML = '<i class="fas fa-plus"></i>';
+    var cancel = document.getElementById('cancelEditExpense');
+    if (cancel) cancel.style.display = 'none';
+    var rcpt = document.getElementById('expenseReceiptWrapper');
+    if (rcpt) rcpt.style.display = '';
 }
 
 // =============================================================================
@@ -696,14 +710,12 @@ function addExpenseRow() {
     }
 
     function _formatExpensesSummary() {
-        // TS 15 — append "<N> expense lines, total net £<total>" to the confirm
-        // when expenses exist on the timesheet form. Sums what's on screen.
-        var lines = document.querySelectorAll('input[name="expense_amount[]"]');
-        var total = 0, count = 0;
-        lines.forEach(function(inp) {
-            var v = parseFloat(inp.value) || 0;
-            if (v > 0) { total += v; count++; }
-        });
+        // TS 29 — append "<N> expense lines, total net £<total>" to the submit
+        // confirm. Reads the server-rendered totals on the Expenses card.
+        var card = document.querySelector('[data-expense-count]');
+        if (!card) return "";
+        var count = parseInt(card.dataset.expenseCount || '0', 10);
+        var total = parseFloat(card.dataset.expenseNet || '0') || 0;
         if (count === 0) return "";
         return "\n\n" + count + " expense line" + (count === 1 ? "" : "s") +
                ", total net £" + total.toFixed(2) + ".";
