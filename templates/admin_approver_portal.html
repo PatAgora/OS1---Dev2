@@ -89,10 +89,13 @@
                     </td>
                     <td class="text-end" style="white-space:nowrap;">
                         {# Assign-to-engagement opens a shared modal so the row
-                           stays narrow — no inline dropdowns. #}
-                        <button type="button" class="btn btn-sm btn-outline-success"
+                           stays narrow — no inline dropdowns. Uses data-*
+                           attributes (not inline onclick) so names with
+                           quotes can't break the markup. #}
+                        <button type="button" class="btn btn-sm btn-outline-success js-assign-btn"
                                 title="Assign this approver to an engagement"
-                                onclick="openAssignModal({{ r.user_id }}, {{ (r.user_name or r.user_email or '')|tojson }})">
+                                data-user-id="{{ r.user_id }}"
+                                data-user-name="{{ (r.user_name or r.user_email or '')|e }}">
                             <i class="fas fa-link me-1"></i>Assign
                         </button>
                         {% if r.alloc_id %}
@@ -220,11 +223,16 @@
   </div>
 </div>
 <script>
-function openAssignModal(userId, userName) {
-  document.getElementById('assignUserId').value = userId;
-  document.getElementById('assignUserName').textContent = userName || ('User #' + userId);
-  new bootstrap.Modal(document.getElementById('assignModal')).show();
-}
+document.addEventListener('DOMContentLoaded', function () {
+  document.querySelectorAll('.js-assign-btn').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.getElementById('assignUserId').value = this.dataset.userId;
+      document.getElementById('assignUserName').textContent =
+        this.dataset.userName || ('User #' + this.dataset.userId);
+      new bootstrap.Modal(document.getElementById('assignModal')).show();
+    });
+  });
+});
 </script>
 
 </div>

@@ -10,6 +10,48 @@
     </p>
 </div>
 
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <a href="{{ url_for('approver.dashboard', status='submitted') }}" class="text-decoration-none">
+            <div class="card h-100">
+                <div class="card-body d-flex align-items-center gap-3">
+                    <div style="font-size:2rem;color:#1e3a8a;"><i class="fas fa-hourglass-half"></i></div>
+                    <div>
+                        <div style="font-size:1.9rem;font-weight:700;line-height:1;color:#1f2937;">{{ counts.outstanding }}</div>
+                        <div class="text-muted small">Timesheets Outstanding</div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-md-4">
+        <a href="{{ url_for('approver.dashboard', status='approved') }}" class="text-decoration-none">
+            <div class="card h-100">
+                <div class="card-body d-flex align-items-center gap-3">
+                    <div style="font-size:2rem;color:#166534;"><i class="fas fa-check-circle"></i></div>
+                    <div>
+                        <div style="font-size:1.9rem;font-weight:700;line-height:1;color:#1f2937;">{{ counts.approved }}</div>
+                        <div class="text-muted small">Timesheets Approved</div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-md-4">
+        <a href="{{ url_for('approver.dashboard', status='rejected') }}" class="text-decoration-none">
+            <div class="card h-100">
+                <div class="card-body d-flex align-items-center gap-3">
+                    <div style="font-size:2rem;color:#991b1b;"><i class="fas fa-times-circle"></i></div>
+                    <div>
+                        <div style="font-size:1.9rem;font-weight:700;line-height:1;color:#1f2937;">{{ counts.rejected }}</div>
+                        <div class="text-muted small">Timesheets Rejected</div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+</div>
+
 <form method="GET" class="row g-2 mb-3 align-items-end">
     <div class="col-md-3">
         <label class="form-label small">Status</label>

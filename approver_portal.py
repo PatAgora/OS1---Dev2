@@ -236,6 +236,14 @@ def dashboard():
     clients = sorted({r["client_name"] for r in timesheets if r["client_name"]})
     projects = sorted({r["engagement_name"] for r in timesheets if r["engagement_name"]})
     associates = sorted({r["associate_name"] for r in timesheets if r["associate_name"]})
+    # Headline tile counts — across ALL of this approver's timesheets,
+    # independent of the current status filter.
+    _all = app._approver_timesheet_query(uid, status_filter=None)
+    counts = {
+        "outstanding": sum(1 for r in _all if (r["status"] or "").lower() == "submitted"),
+        "approved": sum(1 for r in _all if (r["status"] or "").lower() == "approved"),
+        "rejected": sum(1 for r in _all if (r["status"] or "").lower() == "rejected"),
+    }
     return render_template(
         "approver/dashboard.html",
         timesheets=timesheets,
@@ -243,6 +251,7 @@ def dashboard():
         projects=projects,
         associates=associates,
         status_filter=status_filter or "all",
+        counts=counts,
     )
 
 
