@@ -734,7 +734,14 @@ def login():
                     s.commit()
                 except:
                     pass  # Continue even if security updates fail
-                
+
+                # Approvers do not log into the OS1 admin app — they have
+                # their own portal. Send them there instead of starting an
+                # OS1 (Flask-Login) session.
+                if (user.role or "").lower() == "approver":
+                    flash("Approvers sign in at the Approver Portal.", "info")
+                    return redirect(url_for("approver.login"))
+
                 # Check if 2FA is enabled
                 if user.totp_enabled:
                     # Store user ID and email in session for 2FA verification
@@ -1990,175 +1997,10 @@ def _approver_timesheet_query(user_id, status_filter=None):
         return out
 
 
-def _require_approver_role():
-    """Gate: approver or admin only."""
-    if not current_user.is_authenticated:
-        flash("Sign in required.", "warning")
-        return redirect(url_for("login"))
-    role = (current_user.role or "").lower()
-    if role not in ("approver", "admin"):
-        flash("Approver access required.", "danger")
-        return redirect(url_for("index"))
-    return None
-
-
-@app.route("/approver", methods=["GET"])
-@app.route("/approver/dashboard", methods=["GET"])
-@login_required
-def approver_dashboard():
-    """Phase 3 / TS 11 — list timesheets allocated to this approver,
-    filtered by WC / Client / Project / Associate (TS 18)."""
-    guard = _require_approver_role()
-    if guard:
-        return guard
-    status_filter = (request.args.get("status") or "submitted").strip().lower() or None
-    if status_filter == "all":
-        status_filter = None
-    timesheets = _approver_timesheet_query(current_user.id, status_filter=status_filter)
-    # Build filter dropdown options scoped to this approver's set.
-    clients = sorted({r["client_name"] for r in timesheets if r["client_name"]})
-    projects = sorted({r["engagement_name"] for r in timesheets if r["engagement_name"]})
-    associates = sorted({r["associate_name"] for r in timesheets if r["associate_name"]})
-    return render_template(
-        "approver_dashboard.html",
-        timesheets=timesheets,
-        clients=clients,
-        projects=projects,
-        associates=associates,
-        status_filter=status_filter or "all",
-    )
-
-
-@app.route("/approver/history", methods=["GET"])
-@login_required
-def approver_history():
-    guard = _require_approver_role()
-    if guard:
-        return guard
-    timesheets = _approver_timesheet_query(current_user.id, status_filter="approved")
-    return render_template("approver_history.html", timesheets=timesheets)
-
-
-@app.route("/approver/timesheet/<int:ts_id>", methods=["GET"])
-@login_required
-def approver_timesheet_detail(ts_id):
-    guard = _require_approver_role()
-    if guard:
-        return guard
-    with Session(engine) as s:
-        if not _approver_allowed(s, current_user.id, ts_id):
-            flash("That timesheet isn't allocated to you.", "danger")
-            return redirect(url_for("approver_dashboard"))
-        ts = s.get(Timesheet, ts_id)
-        if not ts:
-            abort(404)
-        cand = s.execute(text("SELECT id, name, email FROM candidates WHERE id = :id")
-                         .bindparams(id=ts.user_id)).first()
-        eng = s.execute(text("SELECT id, name, client FROM engagements WHERE id = :id")
-                        .bindparams(id=ts.engagement_id)).first()
-
-        # Build the same day-grid shape the staff approval page uses so the
-        # approver sees an explicit "—" for empty days rather than a sparse
-        # row list that hides standard time when only OT Multiplier defaults
-        # were submitted.
-        week_days = []
-        if ts.period_start:
-            for i in range(7):
-                d = ts.period_start + datetime.timedelta(days=i)
-                week_days.append({
-                    "date": d.strftime("%Y-%m-%d"),
-                    "short": d.strftime("%a"),
-                    "dom": d.strftime("%d"),
-                })
-
-        entries_grid = {}
-        ot_multipliers = {}
-        time_types_used = []
-        rows = s.execute(text(
-            "SELECT entry_date, time_type, value FROM timesheet_entries "
-            "WHERE timesheet_id = :tid"
-        ).bindparams(tid=ts_id)).all()
-        for e in rows:
-            v = float(e.value or 0)
-            if v <= 0:
-                continue
-            d_iso = e.entry_date.strftime("%Y-%m-%d") if e.entry_date else ""
-            tt = e.time_type or ""
-            if not d_iso or not tt:
-                continue
-            if tt == "OT Multiplier":
-                ot_multipliers[d_iso] = v
-            else:
-                entries_grid[(d_iso, tt)] = v
-                if tt not in time_types_used:
-                    time_types_used.append(tt)
-        preferred_order = ["Standard Time", "Overtime", "Holiday", "Sickness", "Unplanned Absence"]
-        time_types_used.sort(
-            key=lambda t: preferred_order.index(t) if t in preferred_order else 999,
-        )
-        # If the associate left every day empty, still render the Standard
-        # Time row so the approver sees an explicit "all dashes" grid rather
-        # than a misleading OT-Multiplier-only view.
-        if not time_types_used:
-            time_types_used = ["Standard Time"]
-        has_ot = any("overtime" in tt.lower() for tt in time_types_used)
-
-        expenses = s.execute(text(
-            "SELECT id, expense_type, description, amount, vat_rate_pct, vat_amount, "
-            "       date_of_expense, distance_miles, receipt_doc_id "
-            "FROM timesheet_expenses WHERE timesheet_id = :tid"
-        ).bindparams(tid=ts_id)).all()
-    return render_template(
-        "approver_detail.html",
-        ts=ts,
-        cand=cand,
-        eng=eng,
-        week_days=week_days,
-        entries_grid=entries_grid,
-        time_types_used=time_types_used,
-        ot_multipliers=ot_multipliers,
-        has_ot=has_ot,
-        expenses=expenses,
-    )
-
-
-@app.route("/approver/timesheet/<int:ts_id>/approve", methods=["POST"])
-@login_required
-def approver_approve_timesheet(ts_id):
-    guard = _require_approver_role()
-    if guard:
-        return guard
-    with Session(engine) as s:
-        if not _approver_allowed(s, current_user.id, ts_id):
-            flash("That timesheet isn't allocated to you.", "danger")
-            return redirect(url_for("approver_dashboard"))
-        ts = s.get(Timesheet, ts_id)
-        if not ts:
-            abort(404)
-        _apply_timesheet_approval(s, ts, current_user.id)
-        s.commit()
-    flash(f"Timesheet #{ts_id} approved.", "success")
-    return redirect(url_for("approver_dashboard"))
-
-
-@app.route("/approver/timesheet/<int:ts_id>/reject", methods=["POST"])
-@login_required
-def approver_reject_timesheet(ts_id):
-    guard = _require_approver_role()
-    if guard:
-        return guard
-    reason = (request.form.get("reject_reason") or "").strip()
-    with Session(engine) as s:
-        if not _approver_allowed(s, current_user.id, ts_id):
-            flash("That timesheet isn't allocated to you.", "danger")
-            return redirect(url_for("approver_dashboard"))
-        ts = s.get(Timesheet, ts_id)
-        if not ts:
-            abort(404)
-        _apply_timesheet_rejection(s, ts, current_user.id, reason)
-        s.commit()
-    flash(f"Timesheet #{ts_id} rejected.", "success")
-    return redirect(url_for("approver_dashboard"))
+# The approver portal moved to its own blueprint — see approver_portal.py
+# (registered at /approver). _apply_timesheet_approval / _apply_timesheet_
+# rejection / _approver_allowed / _approver_timesheet_query above are kept
+# here and imported by that blueprint.
 
 
 # ============================================================================
@@ -4326,7 +4168,7 @@ def admin_approver_portal_create():
                             "user", new_user_id, {"role": "approver", "allocated_to": allocate_engagement_id or None})
         except Exception:
             pass
-        magic_link_url = request.url_root.rstrip('/') + url_for('magic_link_login', token=magic_token)
+        magic_link_url = request.url_root.rstrip('/') + url_for('approver.onboard', token=magic_token)
         if send_magic_link:
             try:
                 html_body = f"""
@@ -4372,7 +4214,7 @@ def admin_approver_portal_reset(user_id: int):
         u.magic_token = secrets.token_urlsafe(32)
         u.magic_token_expires = datetime.datetime.utcnow() + datetime.timedelta(hours=48)
         s.commit()
-        link = request.url_root.rstrip('/') + url_for('magic_link_login', token=u.magic_token)
+        link = request.url_root.rstrip('/') + url_for('approver.onboard', token=u.magic_token)
         try:
             log_audit_event("update", "user_mgmt", f"Password reset link generated for approver {u.email}",
                             "user", user_id, {})
@@ -9373,6 +9215,17 @@ from associate_portal import associate_bp, _models as _portal_models, _apply_rat
 app.register_blueprint(associate_bp, url_prefix="/portal")
 csrf.exempt(associate_bp)  # Portal uses session auth, not Flask-Login — CSRF tokens lost on session rotation
 _apply_rate_limits(app)
+
+# Approver Portal — its own blueprint at /approver (separate session, own
+# login). Registered defensively so a fault in approver_portal.py can never
+# stop the OS1 app from booting.
+try:
+    from approver_portal import approver_bp
+    app.register_blueprint(approver_bp, url_prefix="/approver")
+    csrf.exempt(approver_bp)
+except Exception as _approver_bp_exc:
+    print(f"[APPROVER-PORTAL] blueprint registration failed: {_approver_bp_exc}", flush=True)
+
 app.secret_key = os.environ.get("FLASK_SECRET", "dev-secret")  # for session
 
 

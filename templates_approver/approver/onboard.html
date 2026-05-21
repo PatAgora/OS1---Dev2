@@ -1,0 +1,30 @@
+{% extends "approver/base.html" %}
+
+{% block title %}Set your password{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-5 col-lg-4">
+    <div class="card mt-4">
+      <div class="card-header"><strong><i class="fas fa-key me-2"></i>Welcome to the Approver Portal</strong></div>
+      <div class="card-body">
+        <p class="text-muted small mb-3">Hi {{ name }} — set a password to activate your account.</p>
+        <form method="POST" action="{{ url_for('approver.onboard', token=token) }}">
+          <div class="mb-3">
+            <label class="form-label">New password</label>
+            <input type="password" name="password" class="form-control" minlength="8" required autofocus>
+            <div class="form-text">At least 8 characters.</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Confirm password</label>
+            <input type="password" name="password_confirm" class="form-control" minlength="8" required>
+          </div>
+          <button type="submit" class="btn btn-primary w-100">
+            <i class="fas fa-check me-1"></i> Set password &amp; continue
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

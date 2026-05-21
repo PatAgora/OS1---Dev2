@@ -1,4 +1,4 @@
-{% extends "approver_portal_base.html" %}
+{% extends "approver/base.html" %}
 
 {% block title %}Timesheet TS-{{ '%04d' % ts.id }}{% endblock %}
 
@@ -11,7 +11,7 @@
                 {{ eng.client if eng else '' }} — {{ eng.name if eng else '' }}
             </p>
         </div>
-        <a href="{{ url_for('approver_dashboard') }}" class="btn btn-outline-light">
+        <a href="{{ url_for('approver.dashboard') }}" class="btn btn-outline-light">
             <i class="fas fa-arrow-left me-1"></i> Back to dashboard
         </a>
     </div>
@@ -116,7 +116,7 @@
                     <td class="text-end">£{{ '%.2f' % (x.vat_amount or 0) }}</td>
                     <td>
                         {% if x.receipt_doc_id %}
-                            <a href="{{ url_for('download_document', doc_id=x.receipt_doc_id) }}" target="_blank">
+                            <a href="{{ url_for('approver.receipt', doc_id=x.receipt_doc_id) }}" target="_blank">
                                 <i class="fas fa-paperclip me-1"></i>View
                             </a>
                         {% else %}<span class="text-muted">—</span>{% endif %}
@@ -134,15 +134,13 @@
 {% if (ts.status or '')|lower == 'submitted' %}
 <div class="card">
     <div class="card-body d-flex gap-3 align-items-center flex-wrap">
-        <form method="POST" action="{{ url_for('approver_approve_timesheet', ts_id=ts.id) }}"
+        <form method="POST" action="{{ url_for('approver.approve_timesheet', ts_id=ts.id) }}"
               onsubmit="return confirm('Approve this timesheet?');" class="d-inline">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-success">
                 <i class="fas fa-check me-1"></i> Approve
             </button>
         </form>
-        <form method="POST" action="{{ url_for('approver_reject_timesheet', ts_id=ts.id) }}" class="d-inline flex-grow-1">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <form method="POST" action="{{ url_for('approver.reject_timesheet', ts_id=ts.id) }}" class="d-inline flex-grow-1">
             <div class="input-group">
                 <input type="text" name="reject_reason" class="form-control"
                        placeholder="Rejection reason (required)" required>

@@ -1,4 +1,4 @@
-{% extends "approver_portal_base.html" %}
+{% extends "approver/base.html" %}
 
 {% block title %}Approval History{% endblock %}
 
@@ -34,7 +34,7 @@
                     <td>{{ t.engagement_name }}</td>
                     <td class="text-end">{{ '%.1f' % (t.billable_days or 0) }}</td>
                     <td class="text-end">
-                        <a href="{{ url_for('approver_timesheet_detail', ts_id=t.id) }}" class="btn btn-sm btn-outline-secondary">
+                        <a href="{{ url_for('approver.timesheet_detail', ts_id=t.id) }}" class="btn btn-sm btn-outline-secondary">
                             View →
                         </a>
                     </td>

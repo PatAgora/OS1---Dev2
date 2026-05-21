@@ -116,7 +116,7 @@
                     </td>
                     <td>{{ t.submitted_at.strftime('%d/%m %H:%M') if t.submitted_at else '—' }}</td>
                     <td class="text-end">
-                        <a href="{{ url_for('approver_timesheet_detail', ts_id=t.id) }}" class="btn btn-sm btn-outline-primary me-1">View</a>
+                        <a href="{{ url_for('admin_edit_timesheet_on_behalf', ts_id=t.id) }}" class="btn btn-sm btn-outline-primary me-1">View</a>
                         {% if (t.status or '')|lower == 'approved' and t.ts_type != 'Adjustment' %}
                         <a href="{{ url_for('admin_create_adjustment', ts_id=t.id) }}" class="btn btn-sm btn-outline-warning me-1">Adjust</a>
                         <form method="POST" action="{{ url_for('admin_reopen_timesheet', ts_id=t.id) }}" class="d-inline"

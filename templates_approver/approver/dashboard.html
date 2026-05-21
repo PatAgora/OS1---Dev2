@@ -1,4 +1,4 @@
-{% extends "approver_portal_base.html" %}
+{% extends "approver/base.html" %}
 
 {% block title %}Approver Dashboard{% endblock %}
 
@@ -59,7 +59,7 @@
                         {% else %}<span class="badge bg-secondary">{{ t.status }}</span>{% endif %}
                     </td>
                     <td class="text-end">
-                        <a href="{{ url_for('approver_timesheet_detail', ts_id=t.id) }}" class="btn btn-sm btn-outline-primary">
+                        <a href="{{ url_for('approver.timesheet_detail', ts_id=t.id) }}" class="btn btn-sm btn-outline-primary">
                             View →
                         </a>
                     </td>

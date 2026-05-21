@@ -13,7 +13,7 @@
                 Manage who has access to which client's timesheet approvals.
             </p>
         </div>
-        <a href="{{ url_for('approver_dashboard') }}" target="_blank"
+        <a href="{{ url_for('approver.login') }}" target="_blank"
            class="btn btn-light btn-lg shadow-sm">
             <i class="fas fa-external-link-alt me-2"></i>Open Approver Portal →
         </a>
@@ -88,25 +88,13 @@
                         {% endif %}
                     </td>
                     <td class="text-end" style="white-space:nowrap;">
-                        {# Assign this approver to an engagement — no user picker,
-                           the approver is fixed to this row. #}
-                        <form method="POST" action="{{ url_for('admin_approver_portal_allocate') }}" class="d-inline">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <input type="hidden" name="user_id" value="{{ r.user_id }}">
-                            <select name="engagement_id" class="form-select form-select-sm d-inline-block" style="width:auto;" required>
-                                <option value="">Assign to engagement…</option>
-                                {% for e in engagements %}
-                                <option value="{{ e.id }}">{{ e.client }} — {{ e.name }}</option>
-                                {% endfor %}
-                            </select>
-                            <select name="alloc_role" class="form-select form-select-sm d-inline-block" style="width:auto;">
-                                <option value="primary">Primary</option>
-                                <option value="secondary">Secondary</option>
-                            </select>
-                            <button class="btn btn-sm btn-outline-success" title="Assign this approver to the selected engagement">
-                                <i class="fas fa-link me-1"></i>Assign
-                            </button>
-                        </form>
+                        {# Assign-to-engagement opens a shared modal so the row
+                           stays narrow — no inline dropdowns. #}
+                        <button type="button" class="btn btn-sm btn-outline-success"
+                                title="Assign this approver to an engagement"
+                                onclick="openAssignModal({{ r.user_id }}, {{ (r.user_name or r.user_email or '')|tojson }})">
+                            <i class="fas fa-link me-1"></i>Assign
+                        </button>
                         {% if r.alloc_id %}
                         <form method="POST" action="{{ url_for('admin_approver_portal_revoke', alloc_id=r.alloc_id) }}"
                               class="d-inline" onsubmit="return confirm('Revoke {{ r.user_name }}\\'s access to {{ r.eng_name }}? They remain a user — only this engagement allocation is removed.');">
@@ -192,6 +180,52 @@
         </div>
     </div>
 </div>
+
+{# ----- Assign-to-engagement modal (shared by every row) ----- #}
+<div class="modal fade" id="assignModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="POST" action="{{ url_for('admin_approver_portal_allocate') }}">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="fas fa-link me-2"></i>Assign approver to engagement</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="user_id" id="assignUserId">
+          <p class="text-muted small mb-3">Approver: <strong id="assignUserName"></strong></p>
+          <div class="mb-3">
+            <label class="form-label">Engagement</label>
+            <select name="engagement_id" class="form-select" required>
+              <option value="">— select an engagement —</option>
+              {% for e in engagements %}
+              <option value="{{ e.id }}">{{ e.client }} — {{ e.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Role</label>
+            <select name="alloc_role" class="form-select">
+              <option value="primary">Primary</option>
+              <option value="secondary">Secondary</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-success"><i class="fas fa-link me-1"></i>Assign</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+<script>
+function openAssignModal(userId, userName) {
+  document.getElementById('assignUserId').value = userId;
+  document.getElementById('assignUserName').textContent = userName || ('User #' + userId);
+  new bootstrap.Modal(document.getElementById('assignModal')).show();
+}
+</script>
 
 </div>
 {% endblock %}
