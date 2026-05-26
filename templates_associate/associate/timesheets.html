@@ -33,7 +33,21 @@
                 </div>
                 <div class="col-md-4">
                     <label class="form-label">Week Starting (Monday)</label>
-                    <input type="date" name="week_start" class="form-control" required>
+                    {# TS 3 — the picker is constrained to the WC window
+                       (two prior WCs through next WC) on the client side;
+                       the server-side guard in _is_wc_in_window enforces
+                       the same range on submit. Non-Monday dates are
+                       rejected server-side; the helper text below tells
+                       the Associate what's selectable. #}
+                    <input type="date" name="week_start" id="wc-picker"
+                           class="form-control"
+                           min="{{ wc_window_min }}"
+                           max="{{ wc_window_max }}"
+                           value="{{ wc_window_default }}"
+                           required>
+                    <small class="form-text text-muted">
+                        Select a Monday between {{ wc_window_min }} and {{ wc_window_max }} (two prior WCs, current WC, or next WC).
+                    </small>
                 </div>
                 <div class="col-md-3">
                     <button type="submit" class="btn btn-primary w-100">

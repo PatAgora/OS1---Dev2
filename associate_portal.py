@@ -4098,6 +4098,15 @@ def timesheets():
         except Exception:
             hmrc_mileage_rate = 0.45
 
+        # Phase 1 / TS 3 — WC picker window. Match the server-side guard
+        # in _is_wc_in_window so the date input only offers Mondays
+        # within {two prior WCs, current WC, next WC}.
+        _today = date.today()
+        _today_monday = _today - timedelta(days=_today.weekday())
+        wc_window_min = (_today_monday - timedelta(weeks=2)).isoformat()
+        wc_window_max = (_today_monday + timedelta(weeks=1)).isoformat()
+        wc_window_default = _today_monday.isoformat()
+
         return render_template(
             "associate/timesheets.html",
             assignments=assignments,
@@ -4115,6 +4124,9 @@ def timesheets():
             bank_holidays=bank_holidays,
             can_view_advanced=can_view_advanced,
             hmrc_mileage_rate=hmrc_mileage_rate,
+            wc_window_min=wc_window_min,
+            wc_window_max=wc_window_max,
+            wc_window_default=wc_window_default,
         )
 
 
