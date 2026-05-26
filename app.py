@@ -24434,15 +24434,11 @@ def mark_all_qc_complete(cand_id: int):
     QC COMPLETE so the user doesn't have to save 12 dropdowns one at a
     time. Audit-logged so we can see who did it.
     """
-    try:
-        current_app.logger.info(
-            "mark_all_qc_complete called by user_id=%s role=%s cand_id=%s",
-            getattr(current_user, "id", None),
-            getattr(current_user, "role", None),
-            cand_id,
-        )
-    except Exception:
-        pass
+    print(
+        f"[QC_BULK] called user_id={getattr(current_user, 'id', None)} "
+        f"role={getattr(current_user, 'role', None)} cand_id={cand_id}",
+        flush=True,
+    )
     SKIP_STATUSES = {"QC COMPLETE", "QC NOT REQUIRED", "COMPLETE",
                      "N/A", "CHECK STILL IN DATE"}
     try:
@@ -24491,13 +24487,11 @@ def mark_all_qc_complete(cand_id: int):
 
             s.commit()
 
-            try:
-                current_app.logger.info(
-                    "mark_all_qc_complete done cand_id=%s total=%s flipped=%s skipped=%s breakdown=%s",
-                    cand_id, len(checks), flipped, skipped, skipped_breakdown,
-                )
-            except Exception:
-                pass
+            print(
+                f"[QC_BULK] done cand_id={cand_id} total={len(checks)} "
+                f"flipped={flipped} skipped={skipped} breakdown={skipped_breakdown}",
+                flush=True,
+            )
 
             if not checks:
                 flash(
@@ -24519,12 +24513,12 @@ def mark_all_qc_complete(cand_id: int):
                     "info",
                 )
     except Exception as exc:
-        try:
-            current_app.logger.exception(
-                "mark_all_qc_complete failed cand_id=%s", cand_id
-            )
-        except Exception:
-            pass
+        import traceback as _tb
+        print(
+            f"[QC_BULK] FAILED cand_id={cand_id} {type(exc).__name__}: {exc}\n"
+            + _tb.format_exc(),
+            flush=True,
+        )
         flash(f"Mark QC Complete failed: {type(exc).__name__}: {exc}", "danger")
 
     return redirect(url_for("candidate_profile", cand_id=cand_id))

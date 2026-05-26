@@ -2996,16 +2996,21 @@ function bulkAssignAnalyst(candId) {
 
 function bulkMarkQCComplete(candId) {
   if (!confirm('Mark ALL vetting checks for this associate as QC Complete? This is logged in the audit trail.')) return;
-  var body = new FormData();
-  body.append('csrf_token', _csrfToken());
-  fetch('/action/mark-all-qc-complete/' + candId, {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'X-CSRFToken': _csrfToken() },
-    body: body
-  })
-  .then(function(r) { if (r.ok || r.redirected) { location.reload(); } else { alert('Failed to bulk mark QC Complete'); } })
-  .catch(function() { alert('Network error'); });
+  // Use a synthetic form POST instead of fetch+location.reload(). fetch
+  // follows the 302 inside the request — that follow-GET consumes the
+  // session flash, so the subsequent location.reload() sees nothing.
+  // A real form submit lets the browser do the redirect once, so the
+  // server-side flash actually renders on the next page load.
+  var form = document.createElement('form');
+  form.method = 'POST';
+  form.action = '/action/mark-all-qc-complete/' + candId;
+  var tok = document.createElement('input');
+  tok.type = 'hidden';
+  tok.name = 'csrf_token';
+  tok.value = _csrfToken();
+  form.appendChild(tok);
+  document.body.appendChild(form);
+  form.submit();
 }
 
 function bulkAssignQC(candId) {
