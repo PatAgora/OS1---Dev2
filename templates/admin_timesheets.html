@@ -110,6 +110,148 @@
 </div>
 {% endif %}
 
+{# ----- OT/Expenses permissions card -----
+   Default is OFF (Associates can't claim either) until an admin grants
+   a window here. Custom date range with three quick presets: This
+   week, Next week, Project duration. Bulk-tickable per Associate.
+   Multiple overlapping grants union (any TRUE wins for that week). #}
+<div class="card mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <strong><i class="fas fa-key me-1"></i> Overtime / Expenses permissions</strong>
+        <small class="text-muted">Default OFF. Grant a window per Associate per engagement.</small>
+    </div>
+    <div class="card-body">
+        <form method="GET" class="row g-2 align-items-end mb-3">
+            <input type="hidden" name="client" value="{{ client_filter }}">
+            <input type="hidden" name="project" value="{{ project_filter }}">
+            <input type="hidden" name="associate" value="{{ associate_filter }}">
+            <input type="hidden" name="status" value="{{ status_filter }}">
+            <input type="hidden" name="type" value="{{ type_filter }}">
+            <input type="hidden" name="wc" value="{{ wc_filter }}">
+            <div class="col-md-6">
+                <label class="form-label small fw-semibold">Engagement</label>
+                <select name="perm_engagement" class="form-select form-select-sm" onchange="this.form.submit()">
+                    <option value="">— pick an engagement to manage —</option>
+                    {% for e in perm_engagements %}
+                    <option value="{{ e.id }}" {% if perm_engagement_id == e.id %}selected{% endif %}>{{ e.client or '(no client)' }} — {{ e.name or '(unnamed)' }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% if perm_engagement_id %}
+            <div class="col-md-3">
+                <a href="{{ url_for('admin_timesheets') }}" class="btn btn-sm btn-outline-secondary">Clear engagement</a>
+            </div>
+            {% endif %}
+        </form>
+
+        {% if perm_engagement_id and perm_engagement %}
+            {% if perm_associates %}
+            <form method="POST" action="{{ url_for('admin_ts_permissions_apply') }}" id="permissionsForm">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="engagement_id" value="{{ perm_engagement_id }}">
+
+                <div class="row g-2 mb-3 align-items-end">
+                    <div class="col-md-3">
+                        <label class="form-label small fw-semibold">Effective from</label>
+                        <input type="date" name="effective_from" id="permFrom" class="form-control form-control-sm" required>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small fw-semibold">Effective to <span class="text-muted">(blank = open-ended)</span></label>
+                        <input type="date" name="effective_to" id="permTo" class="form-control form-control-sm">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-semibold d-block">Quick presets</label>
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="presetThisWeek">This week</button>
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="presetNextWeek">Next week</button>
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="presetProject">Project duration</button>
+                    </div>
+                </div>
+
+                <table class="table table-sm align-middle" style="font-size:0.9rem;">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width:36px;">
+                                <input type="checkbox" id="permSelectAll" class="form-check-input" title="Select / deselect all">
+                            </th>
+                            <th>Associate</th>
+                            <th>Today's effective grant</th>
+                            <th class="text-center" style="width:120px;">Allow Overtime</th>
+                            <th class="text-center" style="width:120px;">Allow Expenses</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for a in perm_associates %}
+                        <tr>
+                            <td><input type="checkbox" name="user_id[]" value="{{ a.user_id }}" class="form-check-input perm-row-check"></td>
+                            <td>{{ a.name }}</td>
+                            <td class="small">
+                                {% if a.ot_active and a.expense_active %}<span class="badge bg-success">OT + Expenses</span>
+                                {% elif a.ot_active %}<span class="badge bg-success">OT only</span>
+                                {% elif a.expense_active %}<span class="badge bg-success">Expenses only</span>
+                                {% else %}<span class="text-muted">None — both off</span>{% endif %}
+                            </td>
+                            <td class="text-center"><input type="checkbox" name="ot_{{ a.user_id }}" class="form-check-input" value="1"></td>
+                            <td class="text-center"><input type="checkbox" name="exp_{{ a.user_id }}" class="form-check-input" value="1"></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+
+                <div class="d-flex gap-2 align-items-center">
+                    <button type="submit" class="btn btn-sm btn-primary"><i class="fas fa-check me-1"></i>Apply to ticked Associates</button>
+                    <button type="button" class="btn btn-sm btn-outline-primary" id="permBulkTickOT">Tick OT on all</button>
+                    <button type="button" class="btn btn-sm btn-outline-primary" id="permBulkTickExp">Tick Expenses on all</button>
+                </div>
+            </form>
+
+            <script>
+            (function(){
+                var presets = {{ perm_presets|tojson }};
+                var fromEl = document.getElementById('permFrom');
+                var toEl   = document.getElementById('permTo');
+                document.getElementById('presetThisWeek').addEventListener('click', function() {
+                    fromEl.value = presets.this_week_from || '';
+                    toEl.value   = presets.this_week_to   || '';
+                });
+                document.getElementById('presetNextWeek').addEventListener('click', function() {
+                    fromEl.value = presets.next_week_from || '';
+                    toEl.value   = presets.next_week_to   || '';
+                });
+                document.getElementById('presetProject').addEventListener('click', function() {
+                    fromEl.value = presets.project_from || '';
+                    toEl.value   = presets.project_to   || '';   // may be blank — open-ended
+                });
+                // Default to "This week" on first paint.
+                fromEl.value = presets.this_week_from || '';
+                toEl.value   = presets.this_week_to   || '';
+                // Bulk-tick helpers.
+                document.getElementById('permSelectAll').addEventListener('change', function(e) {
+                    document.querySelectorAll('.perm-row-check').forEach(function(c) { c.checked = e.target.checked; });
+                });
+                document.getElementById('permBulkTickOT').addEventListener('click', function() {
+                    document.querySelectorAll('input[name^="ot_"]').forEach(function(c) { c.checked = true; });
+                    document.querySelectorAll('.perm-row-check').forEach(function(c) { c.checked = true; });
+                });
+                document.getElementById('permBulkTickExp').addEventListener('click', function() {
+                    document.querySelectorAll('input[name^="exp_"]').forEach(function(c) { c.checked = true; });
+                    document.querySelectorAll('.perm-row-check').forEach(function(c) { c.checked = true; });
+                });
+            })();
+            </script>
+            {% else %}
+            <div class="text-muted small py-2">
+                <i class="fas fa-info-circle me-1"></i>
+                No Placed / Contracted Associates on this engagement yet. Make sure their Application is in a Placed / Contract Signed / Active state.
+            </div>
+            {% endif %}
+        {% else %}
+            <div class="text-muted small">
+                Pick an engagement above to manage Overtime / Expenses permissions for the Associates on it.
+            </div>
+        {% endif %}
+    </div>
+</div>
+
 {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
         {% for category, message in messages %}

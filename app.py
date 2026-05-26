@@ -1927,6 +1927,12 @@ def admin_timesheets():
     # ever moves.
     _today = date.today()
     _overdue_cutoff = _today - timedelta(days=8)
+    # OT/Expenses permissions card — optional engagement focus. When
+    # the admin picks an engagement from the picker the page reloads
+    # with ?perm_engagement=<id>, the Associates on that engagement
+    # are loaded with their current permission window (if any), and
+    # the Apply form lets the admin grant/revoke OT/Expenses.
+    perm_engagement_id = request.args.get("perm_engagement", type=int)
     with Session(engine) as s:
         rows = s.execute(text(sql).bindparams(**params)).all()
         # Distinct filter dropdown options across all timesheets.
@@ -1987,6 +1993,65 @@ def admin_timesheets():
             }
             for r in bd_rows
         ]
+        # ----- OT/Expenses permissions card -----
+        # All engagements for the picker.
+        perm_engagements = [
+            {"id": r.id, "client": r.client or "", "name": r.name or "",
+             "start_date": r.start_date, "end_date": r.end_date}
+            for r in s.execute(text(
+                "SELECT id, client, name, start_date, end_date FROM engagements "
+                "ORDER BY client, name"
+            )).all()
+        ]
+        # Quick-pick preset dates (server-side so the template can fill
+        # the date inputs without per-template date math).
+        _today_mon = _today - timedelta(days=_today.weekday())
+        _next_mon  = _today_mon + timedelta(days=7)
+        _next_sun  = _next_mon + timedelta(days=6)
+        _this_sun  = _today_mon + timedelta(days=6)
+        perm_presets = {
+            "this_week_from": _today_mon.isoformat(),
+            "this_week_to":   _this_sun.isoformat(),
+            "next_week_from": _next_mon.isoformat(),
+            "next_week_to":   _next_sun.isoformat(),
+        }
+        # Associates on the selected engagement + their current effective
+        # permission for today (so the checkboxes pre-tick when the
+        # Associate already has a live grant covering today).
+        perm_associates = []
+        perm_engagement = None
+        if perm_engagement_id:
+            perm_engagement = next((e for e in perm_engagements if e["id"] == perm_engagement_id), None)
+            if perm_engagement:
+                perm_presets["project_from"] = (
+                    perm_engagement["start_date"].date().isoformat()
+                    if perm_engagement["start_date"] and hasattr(perm_engagement["start_date"], "date")
+                    else (perm_engagement["start_date"].isoformat() if perm_engagement["start_date"] else _today_mon.isoformat())
+                )
+                perm_presets["project_to"] = (
+                    perm_engagement["end_date"].date().isoformat()
+                    if perm_engagement["end_date"] and hasattr(perm_engagement["end_date"], "date")
+                    else (perm_engagement["end_date"].isoformat() if perm_engagement["end_date"] else "")
+                )
+                # Associates linked to the engagement via Placed-style
+                # Applications (canonical placement record).
+                placed_rows = s.execute(text(
+                    "SELECT DISTINCT c.id AS cand_id, c.name AS cand_name "
+                    "FROM applications a "
+                    "JOIN candidates c ON c.id = a.candidate_id "
+                    "JOIN jobs j ON j.id = a.job_id "
+                    "WHERE j.engagement_id = :eid "
+                    "  AND a.status IN ('Placed','Contract Signed','On Assignment','Active','Contracted','Hired') "
+                    "ORDER BY c.name"
+                ).bindparams(eid=perm_engagement_id)).all()
+                for pr in placed_rows:
+                    perms = _associate_ts_permissions(s, pr.cand_id, perm_engagement_id, _today_mon)
+                    perm_associates.append({
+                        "user_id": pr.cand_id,
+                        "name": pr.cand_name or f"#{pr.cand_id}",
+                        "ot_active": perms["overtime_enabled"],
+                        "expense_active": perms["expense_enabled"],
+                    })
     timesheets = [
         {
             "id": r.id,
@@ -2019,7 +2084,117 @@ def admin_timesheets():
         overall_counts=overall_counts,
         breakdown=breakdown,
         overdue_cutoff=_overdue_cutoff,
+        perm_engagements=perm_engagements,
+        perm_engagement_id=perm_engagement_id,
+        perm_engagement=perm_engagement,
+        perm_associates=perm_associates,
+        perm_presets=perm_presets,
     )
+
+
+@app.route("/admin/timesheets/permissions/apply", methods=["POST"])
+@login_required
+def admin_ts_permissions_apply():
+    """Grant Overtime / Expenses claim rights to one or more Associates
+    on an engagement for a date window. Default state with no row is
+    OFF; multiple overlapping rows union together (any TRUE wins).
+    Audit-logged. Card lives at the top of /admin/timesheets."""
+    if (current_user.role or "").lower() != "admin":
+        flash("Admin access required.", "danger")
+        return redirect(url_for("admin_timesheets"))
+    try:
+        engagement_id = int(request.form.get("engagement_id") or "")
+    except ValueError:
+        flash("Pick an engagement first.", "warning")
+        return redirect(url_for("admin_timesheets"))
+    eff_from_raw = (request.form.get("effective_from") or "").strip()
+    eff_to_raw   = (request.form.get("effective_to") or "").strip()
+    try:
+        eff_from = datetime.date.fromisoformat(eff_from_raw) if eff_from_raw else None
+    except ValueError:
+        eff_from = None
+    try:
+        eff_to = datetime.date.fromisoformat(eff_to_raw) if eff_to_raw else None
+    except ValueError:
+        eff_to = None
+    if not eff_from:
+        flash("Pick a start date for the grant.", "warning")
+        return redirect(url_for("admin_timesheets", perm_engagement=engagement_id))
+    if eff_to and eff_to < eff_from:
+        flash("End date can't be before the start date.", "warning")
+        return redirect(url_for("admin_timesheets", perm_engagement=engagement_id))
+    # The form posts user_id[] for each ticked Associate row, plus
+    # checkbox fields ot_<user_id> and exp_<user_id> for that row.
+    user_ids = request.form.getlist("user_id[]")
+    if not user_ids:
+        flash("Tick at least one Associate to grant permissions to.", "warning")
+        return redirect(url_for("admin_timesheets", perm_engagement=engagement_id))
+    inserted = 0
+    with Session(engine) as s:
+        for raw_uid in user_ids:
+            try:
+                uid = int(raw_uid)
+            except (TypeError, ValueError):
+                continue
+            ot  = request.form.get(f"ot_{uid}")  in ("1", "on", "true")
+            exp = request.form.get(f"exp_{uid}") in ("1", "on", "true")
+            if not ot and not exp:
+                # Nothing to grant — skip rather than write a no-op row.
+                continue
+            s.add(AssociateTimesheetPermission(
+                user_id=uid,
+                engagement_id=engagement_id,
+                effective_from=eff_from,
+                effective_to=eff_to,
+                overtime_enabled=ot,
+                expense_enabled=exp,
+                created_by=current_user.id,
+            ))
+            inserted += 1
+        s.commit()
+        try:
+            log_audit_event(
+                "create", "config",
+                f"Granted Timesheet permissions on engagement {engagement_id} to {inserted} Associate(s)",
+                "engagement", engagement_id,
+                {"from": eff_from_raw, "to": eff_to_raw or None, "user_ids": user_ids, "count": inserted},
+            )
+        except Exception:
+            pass
+    if inserted:
+        flash(f"Permissions granted to {inserted} Associate(s) from {eff_from_raw} "
+              f"to {eff_to_raw or 'open-ended'}.", "success")
+    else:
+        flash("No grants written — make sure at least one OT or Expenses box is ticked per Associate.", "warning")
+    return redirect(url_for("admin_timesheets", perm_engagement=engagement_id))
+
+
+@app.route("/admin/timesheets/permissions/<int:perm_id>/revoke", methods=["POST"])
+@login_required
+def admin_ts_permissions_revoke(perm_id: int):
+    """Delete a single permission row (so the Associate's effective
+    grant for the affected weeks reverts to whatever any other
+    overlapping row still says — or to OFF if none remains)."""
+    if (current_user.role or "").lower() != "admin":
+        flash("Admin access required.", "danger")
+        return redirect(url_for("admin_timesheets"))
+    eng_id = None
+    with Session(engine) as s:
+        row = s.get(AssociateTimesheetPermission, perm_id)
+        if not row:
+            flash("Permission row not found (may have already been revoked).", "warning")
+            return redirect(url_for("admin_timesheets"))
+        eng_id = row.engagement_id
+        s.delete(row)
+        s.commit()
+        try:
+            log_audit_event("delete", "config",
+                            f"Revoked Timesheet permission #{perm_id}",
+                            "engagement", eng_id, {"perm_id": perm_id})
+        except Exception:
+            pass
+    flash("Permission revoked.", "success")
+    return redirect(url_for("admin_timesheets", perm_engagement=eng_id))
 
 
 @app.route("/admin/timesheets/<int:ts_id>/approve", methods=["POST"])
@@ -4036,6 +4211,56 @@ def _require_admin():
         flash("Admin access required.", "danger")
         return redirect(url_for("index"))
     return None
+
+
+def _associate_ts_permissions(session_obj, user_id: int, engagement_id: int, week_start) -> dict:
+    """Look up whether an Associate is allowed to claim Overtime and/or
+    Expenses on a given week (week_start is the Monday of the WC).
+    Default state with no matching row = both OFF.
+
+    Returns {"overtime_enabled": bool, "expense_enabled": bool}.
+
+    Multiple overlapping permission rows union together — any row with
+    overtime_enabled=TRUE that covers the WC turns it on; same for
+    expenses. This makes "Bulk apply" behave as expected: layering
+    a project-duration permit over a one-week permit can't accidentally
+    revoke the broader grant.
+    """
+    if not user_id or not engagement_id or not week_start:
+        return {"overtime_enabled": False, "expense_enabled": False}
+    try:
+        wc = week_start.date() if hasattr(week_start, "date") else week_start
+    except Exception:
+        wc = week_start
+    try:
+        row = session_obj.execute(text(
+            "SELECT "
+            "  BOOL_OR(COALESCE(overtime_enabled, FALSE)) AS ot, "
+            "  BOOL_OR(COALESCE(expense_enabled,  FALSE)) AS ex "
+            "FROM associate_ts_permissions "
+            "WHERE user_id = :uid AND engagement_id = :eid "
+            "  AND effective_from <= :wc "
+            "  AND (effective_to IS NULL OR effective_to >= :wc)"
+        ).bindparams(uid=user_id, eid=engagement_id, wc=wc)).first()
+        if row:
+            return {"overtime_enabled": bool(row.ot), "expense_enabled": bool(row.ex)}
+    except Exception:
+        # SQLite lacks BOOL_OR — fall back to MAX(...) over INTEGER cast.
+        try:
+            row = session_obj.execute(text(
+                "SELECT "
+                "  MAX(CASE WHEN overtime_enabled THEN 1 ELSE 0 END) AS ot, "
+                "  MAX(CASE WHEN expense_enabled  THEN 1 ELSE 0 END) AS ex "
+                "FROM associate_ts_permissions "
+                "WHERE user_id = :uid AND engagement_id = :eid "
+                "  AND effective_from <= :wc "
+                "  AND (effective_to IS NULL OR effective_to >= :wc)"
+            ).bindparams(uid=user_id, eid=engagement_id, wc=wc)).first()
+            if row:
+                return {"overtime_enabled": bool(row[0]), "expense_enabled": bool(row[1])}
+        except Exception:
+            pass
+    return {"overtime_enabled": False, "expense_enabled": False}
 
 
 # ---- Clients ----
@@ -8623,6 +8848,29 @@ class EngagementApprover(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
+class AssociateTimesheetPermission(Base):
+    """Per-Associate × per-engagement × per-date-range grant of Overtime
+    and/or Expenses claim ability. Default state (no row) = both OFF —
+    the Associate sees neither the OT row nor the Expenses card on
+    /portal/timesheets. The recruiter grants a window by adding a row
+    on /admin/timesheets > OT/Expenses card with a date range and the
+    boxes ticked. Overlapping rows union together (any TRUE wins for
+    the week)."""
+    __tablename__ = "associate_ts_permissions"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("candidates.id"), nullable=False, index=True)
+    engagement_id = Column(Integer, ForeignKey("engagements.id"), nullable=False, index=True)
+    # Inclusive Monday-aligned date window. effective_to NULL = open-ended
+    # (typically used for the "Project duration" preset where the engagement
+    # doesn't have a hard end date yet).
+    effective_from = Column(Date, nullable=False)
+    effective_to = Column(Date, nullable=True)
+    overtime_enabled = Column(Boolean, default=False)
+    expense_enabled = Column(Boolean, default=False)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 class Invoice(Base):
     """Invoice model for client billing"""
     __tablename__ = "invoices"
@@ -10737,6 +10985,45 @@ try:
             except Exception:
                 # Column already exists — boot-time pattern, harmless.
                 pass
+
+        # --- associate_ts_permissions table (per-Associate OT/Expenses grants) ---
+        try:
+            _rc.execute(text("""
+                CREATE TABLE IF NOT EXISTS associate_ts_permissions (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    engagement_id INTEGER NOT NULL,
+                    effective_from DATE NOT NULL,
+                    effective_to DATE,
+                    overtime_enabled BOOLEAN DEFAULT FALSE,
+                    expense_enabled BOOLEAN DEFAULT FALSE,
+                    created_by INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+        except Exception:
+            try:
+                _rc.execute(text("""
+                    CREATE TABLE IF NOT EXISTS associate_ts_permissions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        engagement_id INTEGER NOT NULL,
+                        effective_from DATE NOT NULL,
+                        effective_to DATE,
+                        overtime_enabled BOOLEAN DEFAULT 0,
+                        expense_enabled BOOLEAN DEFAULT 0,
+                        created_by INTEGER,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """))
+            except Exception:
+                pass
+        try:
+            _rc.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_atp_user_eng ON associate_ts_permissions (user_id, engagement_id)"
+            ))
+        except Exception:
+            pass
 
         # --- users.is_approver (approver capability flag, additive) ---
         try:

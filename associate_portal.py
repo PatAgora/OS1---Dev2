@@ -4050,11 +4050,27 @@ def timesheets():
         # Sort monthly bundles by key (most recent first)
         sorted_bundles = sorted(monthly_bundles.items(), key=lambda x: x[0], reverse=True)
 
-        expense_enabled = config.expense_enabled if config else False
-        # TS 2 — Overtime is hidden by default; an OS1 admin turns it on per
-        # engagement via the timesheet config. When off, drop the overtime
-        # time-types so the OT row never renders on the Associate's grid.
-        overtime_enabled = config.overtime_enabled if config else False
+        # TS 2 — Overtime / Expenses are now gated PER-ASSOCIATE × PER-WEEK
+        # via associate_ts_permissions (admin grants on /admin/timesheets).
+        # Default state with no permission row = both OFF; the engagement-
+        # wide TimesheetConfig flags are no longer read for this purpose.
+        # A recruiter can issue a "this week" / "next week" / "project
+        # duration" grant with custom dates to flip either toggle on for
+        # a specific Associate; the helper unions overlapping rows.
+        _perm_eng_id = getattr(current_ts, "engagement_id", None)
+        _perm_week_start = getattr(current_ts, "week_start", None) or (
+            current_ts.period_start.date()
+            if current_ts and getattr(current_ts, "period_start", None) and hasattr(current_ts.period_start, "date")
+            else getattr(current_ts, "period_start", None)
+        ) if current_ts else None
+        if current_ts and _perm_eng_id and _perm_week_start:
+            from app import _associate_ts_permissions
+            _perms = _associate_ts_permissions(s, cand_id, _perm_eng_id, _perm_week_start)
+            overtime_enabled = _perms["overtime_enabled"]
+            expense_enabled  = _perms["expense_enabled"]
+        else:
+            overtime_enabled = False
+            expense_enabled = False
         if not overtime_enabled:
             time_types = [t for t in time_types if "overtime" not in (t or "").lower()]
         expense_types_list = []
