@@ -172,7 +172,11 @@
                   enctype="multipart/form-data" id="adminAddExpenseForm"
                   data-add-action="{{ url_for('admin_ts_expense_add', ts_id=ts.id) }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <div class="row g-2 align-items-end">
+                {# align-items-start so labels + inputs line up across
+                   the row; Receipt's "PDF / JPG / PNG, max 5 MB." hint
+                   and Mileage's "£X @ £rate/mile" derivation hang
+                   below their columns without pushing the labels up. #}
+                <div class="row g-2 align-items-start">
                     <div class="col-md-3">
                         <label class="form-label" style="font-size:12px;">Category</label>
                         <select name="expense_category_id" id="adminExpCategorySelect" class="form-select form-select-sm" required>
@@ -208,14 +212,19 @@
                         <label class="form-label" style="font-size:12px;">Description</label>
                         <input type="text" name="expense_description" id="adminExpDescription" class="form-control form-control-sm" placeholder="Brief description">
                     </div>
-                    <div class="col-md-2">
-                        <label class="form-label" style="font-size:12px;">Receipt</label>
-                        <input type="file" name="expense_receipt" class="form-control form-control-sm" accept=".pdf,.jpg,.jpeg,.png">
+                    <div class="col-md-2" id="adminExpReceiptWrapper">
+                        <label class="form-label" style="font-size:12px;">Receipt <span id="adminExpReceiptReq" class="text-danger">*</span></label>
+                        <input type="file" name="expense_receipt" id="adminExpReceipt"
+                               class="form-control form-control-sm"
+                               accept=".pdf,.jpg,.jpeg,.png" required>
+                        <small class="text-muted" id="adminExpReceiptHint" style="font-size:11px;">PDF / JPG / PNG, max 5 MB.</small>
                     </div>
                     <div class="col-md-1">
+                        <label class="form-label" style="font-size:12px;">&nbsp;</label>
                         <button type="submit" class="btn btn-sm btn-primary w-100" id="adminExpSubmitBtn" title="Save"><i class="fas fa-plus"></i></button>
                     </div>
                     <div class="col-md-1">
+                        <label class="form-label" style="font-size:12px;">&nbsp;</label>
                         <button type="button" class="btn btn-sm btn-outline-secondary w-100" id="adminExpCancelEdit"
                                 style="display:none;">Cancel</button>
                     </div>
@@ -277,6 +286,10 @@
     var form = document.getElementById('adminAddExpenseForm');
     var cancelBtn = document.getElementById('adminExpCancelEdit');
     var submitBtn = document.getElementById('adminExpSubmitBtn');
+    var rcptW   = document.getElementById('adminExpReceiptWrapper');
+    var rcptIn  = document.getElementById('adminExpReceipt');
+    var rcptReq = document.getElementById('adminExpReceiptReq');
+    var rcptHint = document.getElementById('adminExpReceiptHint');
 
     function syncMileageMode() {
         var opt = sel.options[sel.selectedIndex];
@@ -285,6 +298,14 @@
         distW.style.display = isMileage ? '' : 'none';
         amtIn.required  = !isMileage;
         distIn.required = !!isMileage;
+        // TS 28 — Mileage doesn't need a receipt; everything else does.
+        if (rcptW) rcptW.style.display = isMileage ? 'none' : '';
+        if (rcptIn) {
+            rcptIn.required = !isMileage;
+            if (isMileage) rcptIn.value = '';
+        }
+        if (rcptReq) rcptReq.style.display = isMileage ? 'none' : '';
+        if (rcptHint) rcptHint.style.display = isMileage ? 'none' : '';
     }
     function recomputeDerived() {
         if (!distW || distW.style.display === 'none') return;
@@ -323,6 +344,9 @@
             distIn.value = this.dataset.distance || '';
             document.getElementById('adminExpDescription').value = this.dataset.description || '';
             recomputeDerived();
+            // Receipt can't be swapped on edit — hide and drop required.
+            if (rcptW)  rcptW.style.display = 'none';
+            if (rcptIn) { rcptIn.required = false; rcptIn.value = ''; }
             form.scrollIntoView({behavior: 'smooth', block: 'center'});
         });
     });

@@ -2831,7 +2831,12 @@ def admin_ts_expense_add(ts_id: int):
                 return redirect(url_for("admin_edit_timesheet_on_behalf", ts_id=ts_id))
             distance_miles = None
         vat_amount = round(amount * (vat_pct / 100.0), 2)
-        receipt_doc_id = _admin_save_receipt(s, request.files.get("expense_receipt"))
+        # TS 28: receipt mandatory unless the category is Mileage.
+        receipt_file = request.files.get("expense_receipt")
+        if not is_mileage and not (receipt_file and receipt_file.filename):
+            flash("A receipt is required for this expense category. Please attach a PDF, JPG or PNG (max 5 MB).", "warning")
+            return redirect(url_for("admin_edit_timesheet_on_behalf", ts_id=ts_id))
+        receipt_doc_id = _admin_save_receipt(s, receipt_file)
         new_exp = TimesheetExpense(
             timesheet_id=ts_id,
             expense_type=canonical_name,
