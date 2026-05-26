@@ -677,12 +677,14 @@ function cancelEditExpense() {
     // Shade cells whose date column matches Sat/Sun/BH.
     function shadeNonWorkingDays() {
         // The timesheet grid renders cells with name="entry_<date>_<time_type>".
-        // We grab the date from the name and tint the cell when needed.
-        document.querySelectorAll('input[name^="entry_"]').forEach(function(inp) {
-            var m = inp.name.match(/^entry_(\d{4}-\d{2}-\d{2})_/);
+        // Day rows (Standard / Holiday / Sickness) use <select>; the Overtime
+        // row uses <input>. Need to match both element types — earlier this
+        // selector was input-only and only the Overtime row got tinted.
+        document.querySelectorAll('input[name^="entry_"], select[name^="entry_"]').forEach(function(el) {
+            var m = el.name.match(/^entry_(\d{4}-\d{2}-\d{2})_/);
             if (!m) return;
             var iso = m[1];
-            var cell = inp.closest('td') || inp.parentElement;
+            var cell = el.closest('td') || el.parentElement;
             if (!cell) return;
             if (_isBankHoliday(iso)) {
                 cell.style.background = '#fef3c7';     // amber tint = bank holiday
@@ -696,14 +698,18 @@ function cancelEditExpense() {
 
     // ---- Pre-submit checks (TS 9) --------------------------------------------
     function _collectEntries() {
-        // Returns { totalStdDays: float, weekendEntries: [], bhEntries: [] }
+        // Returns { totalStdDays: float, weekendEntries: [], bhEntries: [] }.
+        // The day rows (Standard / Holiday / Sickness) use <select>; only
+        // Overtime uses <input>. Earlier this selector was input-only,
+        // which made totalStdDays always 0 and the <5-day warning fire on
+        // every submit even when the week was complete.
         var totalStdDays = 0;
         var weekendEntries = [];
         var bhEntries = [];
-        document.querySelectorAll('input[name^="entry_"]').forEach(function(inp) {
-            var val = parseFloat(inp.value) || 0;
+        document.querySelectorAll('input[name^="entry_"], select[name^="entry_"]').forEach(function(el) {
+            var val = parseFloat(el.value) || 0;
             if (!val) return;
-            var m = inp.name.match(/^entry_(\d{4}-\d{2}-\d{2})_(.+)$/);
+            var m = el.name.match(/^entry_(\d{4}-\d{2}-\d{2})_(.+)$/);
             if (!m) return;
             var iso = m[1];
             var timeType = (m[2] || '').replace(/__/g, ' ').toLowerCase();

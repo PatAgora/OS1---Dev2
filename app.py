@@ -10784,51 +10784,72 @@ _UK_BANK_HOLIDAYS_FALLBACK = [
 ]
 
 def _seed_bank_holidays():
+    """Idempotent: populate bank_holiday_dates from gov.uk (preferred)
+    or the static fallback list. Detects Postgres vs SQLite up front so
+    the upsert SQL doesn't need cross-dialect try/except (which on
+    Postgres would abort the transaction after the first failed
+    INSERT OR IGNORE — that was the bug that left prod with zero rows
+    and made every bank-holiday shading silently fall through to plain
+    weekend grey)."""
+    is_postgres = (engine.dialect.name == "postgresql")
+    if is_postgres:
+        upsert_sql = (
+            "INSERT INTO bank_holiday_dates (date, region, title) "
+            "VALUES (:d, 'england-and-wales', :t) "
+            "ON CONFLICT (date, region) DO NOTHING"
+        )
+    else:
+        upsert_sql = (
+            "INSERT OR IGNORE INTO bank_holiday_dates (date, region, title) "
+            "VALUES (:d, 'england-and-wales', :t)"
+        )
+
+    def _insert(s, d, title):
+        try:
+            s.execute(text(upsert_sql).bindparams(d=d, t=title))
+        except Exception:
+            # If a row fails on Postgres, the surrounding transaction is
+            # already poisoned — caller will rollback + retry the rest.
+            raise
+
     try:
+        # Try the gov.uk JSON feed first. Falls back to the static list
+        # on any network / parse error.
+        gov_rows = []
+        try:
+            resp = requests.get("https://www.gov.uk/bank-holidays.json", timeout=10)
+            resp.raise_for_status()
+            payload = resp.json()
+            ew = (payload or {}).get("england-and-wales", {}).get("events", [])
+            for ev in ew:
+                d = ev.get("date") or ""
+                title = (ev.get("title") or "")[:120]
+                if d:
+                    gov_rows.append((d, title))
+        except Exception:
+            gov_rows = []
+
+        seed_rows = gov_rows if gov_rows else _UK_BANK_HOLIDAYS_FALLBACK
+        inserted = 0
         with Session(engine) as s:
-            # Try the gov.uk JSON feed first. Falls back to the static list
-            # on any network / parse error.
-            try:
-                resp = requests.get("https://www.gov.uk/bank-holidays.json", timeout=10)
-                resp.raise_for_status()
-                payload = resp.json()
-                ew = (payload or {}).get("england-and-wales", {}).get("events", [])
-                if ew:
-                    for ev in ew:
-                        try:
-                            d = ev.get("date") or ""
-                            title = (ev.get("title") or "")[:120]
-                            if d:
-                                s.execute(text(
-                                    "INSERT OR IGNORE INTO bank_holiday_dates (date, region, title) "
-                                    "VALUES (:d, 'england-and-wales', :t)"
-                                ).bindparams(d=d, t=title))
-                        except Exception:
-                            pass
-                    s.commit()
-                    return
-            except Exception:
-                pass
-            # Fallback list
-            for d, title in _UK_BANK_HOLIDAYS_FALLBACK:
+            for d, title in seed_rows:
+                # Each insert in its own savepoint so a single failure
+                # (e.g. malformed date from the feed) doesn't abort the
+                # surrounding transaction on Postgres.
                 try:
-                    s.execute(text(
-                        "INSERT OR IGNORE INTO bank_holiday_dates (date, region, title) "
-                        "VALUES (:d, 'england-and-wales', :t)"
-                    ).bindparams(d=d, t=title))
+                    with s.begin_nested():
+                        _insert(s, d, title)
+                    inserted += 1
                 except Exception:
-                    # Postgres flavour — use ON CONFLICT DO NOTHING
-                    try:
-                        s.execute(text(
-                            "INSERT INTO bank_holiday_dates (date, region, title) "
-                            "VALUES (:d, 'england-and-wales', :t) "
-                            "ON CONFLICT (date, region) DO NOTHING"
-                        ).bindparams(d=d, t=title))
-                    except Exception:
-                        pass
+                    continue
             s.commit()
-    except Exception:
-        pass
+        print(
+            f"[BANK_HOLIDAYS] seeded {inserted}/{len(seed_rows)} rows "
+            f"(source={'gov.uk' if gov_rows else 'fallback'}, dialect={engine.dialect.name})",
+            flush=True,
+        )
+    except Exception as exc:
+        print(f"[BANK_HOLIDAYS] seed failed: {exc}", flush=True)
 
 try:
     _seed_bank_holidays()
