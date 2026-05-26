@@ -21,7 +21,9 @@
     <div class="col-md-3"><strong>Week:</strong> WC {{ ts.period_start.strftime('%d/%m/%Y') if ts.period_start else '—' }} – {{ ts.period_end.strftime('%d/%m/%Y') if ts.period_end else '—' }}</div>
     <div class="col-md-3"><strong>Status:</strong>
         {% set s_low = (ts.status or '')|lower %}
-        {% if s_low == 'submitted' %}<span class="badge bg-primary">Submitted</span>
+        {% if s_low == 'submitted' and ts.was_rejected %}
+            <span class="badge bg-warning text-dark">Re-submitted</span>
+        {% elif s_low == 'submitted' %}<span class="badge bg-primary">Submitted</span>
         {% elif s_low == 'approved' %}<span class="badge bg-success">Approved</span>
         {% elif s_low == 'rejected' %}<span class="badge bg-danger">Rejected</span>
         {% else %}<span class="badge bg-secondary">{{ ts.status }}</span>{% endif %}
@@ -29,6 +31,21 @@
     <div class="col-md-3"><strong>Billable days:</strong> {{ '%.1f' % (ts.billable_days or 0) }}</div>
     <div class="col-md-3"><strong>Submitted:</strong> {{ ts.submitted_at.strftime('%d %b %Y %H:%M') if ts.submitted_at else '—' }}</div>
 </div>
+
+{# TS 5 — show the prior rejection reason whenever the row has been
+   rejected before. Renders for both 'Submitted (was_rejected)' rows
+   (so the approver knows what's changed) and rows still in Rejected
+   status (so they can see what they themselves wrote). #}
+{% if ts.was_rejected %}
+<div class="alert alert-warning mb-3">
+    <strong><i class="fas fa-history me-1"></i> Previously rejected.</strong>
+    {% if ts.rejection_reason %}
+        Prior reason: <em>{{ ts.rejection_reason }}</em>
+    {% else %}
+        No reason was recorded on the previous rejection.
+    {% endif %}
+</div>
+{% endif %}
 
 <div class="card mb-3">
     <div class="card-header"><strong>Time entries</strong></div>

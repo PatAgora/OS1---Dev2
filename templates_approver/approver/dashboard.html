@@ -211,7 +211,12 @@
                     <td class="text-end">{{ '%.1f' % (t.billable_days or 0) }}</td>
                     <td>
                         {% set s_low = (t.status or '')|lower %}
-                        {% if s_low == 'submitted' %}<span class="badge bg-primary">Submitted</span>
+                        {% if s_low == 'submitted' and t.was_rejected %}
+                            {# TS 5 — sticky was_rejected flag tells us this
+                               Submitted row is actually a Re-submission, so
+                               the approver knows there's prior context. #}
+                            <span class="badge bg-warning text-dark" title="Previously rejected — see detail for the prior reason">Re-submitted</span>
+                        {% elif s_low == 'submitted' %}<span class="badge bg-primary">Submitted</span>
                         {% elif s_low == 'approved' %}<span class="badge bg-success">Approved</span>
                         {% elif s_low == 'rejected' %}<span class="badge bg-danger">Rejected</span>
                         {% else %}<span class="badge bg-secondary">{{ t.status }}</span>{% endif %}

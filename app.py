@@ -1765,11 +1765,14 @@ def _apply_timesheet_approval(s, ts, user_id):
 
 
 def _apply_timesheet_rejection(s, ts, user_id, reason: str = ""):
-    """Phase 3 — reject a timesheet with an optional reason. Audit logs."""
+    """Phase 3 — reject a timesheet with an optional reason. Audit logs.
+    Also stamps the sticky was_rejected flag so the approver dashboard
+    can render a Re-submitted badge if the Associate later re-submits."""
     if not ts:
         return
     old_status = ts.status
     ts.status = "Rejected"
+    ts.was_rejected = True
     if reason:
         try:
             s.execute(text(
@@ -1811,6 +1814,8 @@ def _approver_timesheet_query(user_id, status_filter=None):
     sql = text("""
         SELECT t.id AS ts_id, t.status, t.period_start, t.period_end, t.billable_days,
                t.submitted_at, t.user_id AS associate_id, t.engagement_id,
+               COALESCE(t.was_rejected, FALSE) AS was_rejected,
+               t.rejection_reason,
                e.name AS engagement_name, e.client AS client_name
         FROM timesheets t
         LEFT JOIN engagements e ON e.id = t.engagement_id
@@ -1851,6 +1856,8 @@ def _approver_timesheet_query(user_id, status_filter=None):
                 "engagement_id": r.engagement_id,
                 "engagement_name": r.engagement_name or "",
                 "client_name": r.client_name or "",
+                "was_rejected": bool(r.was_rejected),
+                "rejection_reason": r.rejection_reason or "",
             })
         return out
 
@@ -8403,6 +8410,12 @@ class Timesheet(Base):
     approved_by = Column(Integer, nullable=True)
     approved_at = Column(DateTime, nullable=True)
     rejection_reason = Column(Text, nullable=True)
+    # TS 5 — sticky flag set when this timesheet has been rejected at
+    # least once. Never cleared: keeps the audit trail intact so the
+    # approver dashboard can render a "Re-submitted" badge instead of
+    # plain "Submitted", and the detail view can surface the previous
+    # rejection_reason so the approver knows what changed.
+    was_rejected = Column(Boolean, default=False, nullable=True)
     # Phase 4 / TS 21 — Adjustment TS support. timesheet_type:
     # 'Standard' (default) | 'Adjustment'. Adjustment rows reference the
     # originating already-invoiced timesheet and carry positive or negative
@@ -10645,11 +10658,25 @@ try:
             "timesheet_type VARCHAR(20) DEFAULT 'Standard'",
             "originating_timesheet_id INTEGER",
             "invoiced_on_invoice_id INTEGER",
+            # TS 5 — sticky "this timesheet was rejected at least once"
+            # flag. Drives Re-submitted badge on the approver dashboard
+            # + previous-reason banner on the detail view.
+            "was_rejected BOOLEAN DEFAULT FALSE",
         ):
             try:
                 _rc.execute(text(f"ALTER TABLE timesheets ADD COLUMN {_coldef}"))
             except Exception:
                 pass
+        # Backfill: anything currently in Rejected state should carry
+        # the flag too so its history is visible if the Associate
+        # re-submits it later. Idempotent.
+        try:
+            _rc.execute(text(
+                "UPDATE timesheets SET was_rejected = TRUE "
+                "WHERE LOWER(status) = 'rejected' AND (was_rejected IS NULL OR was_rejected = FALSE)"
+            ))
+        except Exception:
+            pass
 
         # --- invoices columns (Phases 6-8 additive) ---
         for _coldef in (
