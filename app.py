@@ -2626,6 +2626,26 @@ def _vat_band_label(treatment: str) -> str:
     }.get(treatment, f"Expenses – {treatment}")
 
 
+def _engagement_billing_block(eng) -> dict:
+    """IR 1, 10 — return the client billing block as a flat dict for the
+    invoice generator, PDF renderer, and view template. Always returns a
+    dict (empty strings rather than None) so consumers can render
+    unconditionally."""
+    if eng is None:
+        return {"company_name": "", "addr1": "", "addr2": "", "city": "",
+                "postcode": "", "company_reg": "", "vat_number": "", "po": ""}
+    return {
+        "company_name": (eng.client or "").strip(),
+        "addr1": (getattr(eng, "billing_address_line1", "") or "").strip(),
+        "addr2": (getattr(eng, "billing_address_line2", "") or "").strip(),
+        "city": (getattr(eng, "billing_city", "") or "").strip(),
+        "postcode": (getattr(eng, "billing_postcode", "") or "").strip(),
+        "company_reg": (getattr(eng, "client_company_reg", "") or "").strip(),
+        "vat_number": (getattr(eng, "client_vat_number", "") or "").strip(),
+        "po": (getattr(eng, "purchase_order_number", "") or "").strip(),
+    }
+
+
 def _generate_invoice_payload(s, engagement_id: int, year: int, month: int) -> dict:
     """IR 7, 10, 13, 15 — aggregate Approved timesheets + their expense
     lines for (engagement, year, month). Returns dict ready to populate
@@ -2666,9 +2686,12 @@ def _generate_invoice_payload(s, engagement_id: int, year: int, month: int) -> d
     cand_ids = list({r.user_id for r in ts_rows if r.user_id})
     names = {}
     if cand_ids:
+        cand_tuple = tuple(cand_ids)
+        if len(cand_tuple) == 1:
+            cand_tuple = (cand_tuple[0], cand_tuple[0])
         for cid, nm in s.execute(text(
             "SELECT id, name FROM candidates WHERE id IN :ids"
-        ).bindparams(ids=tuple(cand_ids))).all():
+        ).bindparams(ids=cand_tuple)).all():
             names[cid] = nm
 
     # Day rate lookup from EngagementPlan if billable.day_rate is 0.
@@ -2803,6 +2826,7 @@ def _generate_invoice_payload(s, engagement_id: int, year: int, month: int) -> d
         "engagement_id": engagement_id,
         "client_name": eng.client or "",
         "engagement_name": eng.name or "",
+        "client_billing": _engagement_billing_block(eng),
         "period_start": period_start,
         "period_end": period_end,
         "invoice_date": date.today(),
@@ -3543,19 +3567,35 @@ def _generate_invoice_pdf(invoice, line_items):
     pdf.line(10, pdf.get_y() + 4, 200, pdf.get_y() + 4)
     pdf.ln(12)
 
-    # Bill To / Payment Terms
+    # Bill To / Payment Terms — IR 10 — full client billing block sourced
+    # from the engagement record (address, postcode, company reg, VAT,
+    # purchase-order). Falls back to the legacy single-line client_name
+    # when the engagement isn't reachable (e.g. orphaned legacy invoice).
+    bb = _engagement_billing_block(getattr(invoice, "engagement", None))
     pdf.set_font("Helvetica", "", 8)
     pdf.set_text_color(107, 114, 128)
     pdf.cell(95, 5, "BILL TO", new_x="RIGHT")
     pdf.cell(0, 5, "PAYMENT TERMS", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", "B", 12)
     pdf.set_text_color(31, 41, 55)
-    pdf.cell(95, 7, _safe(invoice.client_name or ""), new_x="RIGHT")
+    pdf.cell(95, 7, _safe(bb["company_name"] or invoice.client_name or ""), new_x="RIGHT")
     pdf.cell(0, 7, _safe(invoice.payment_terms or "Net 30"), new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(107, 114, 128)
     if invoice.engagement_name:
-        pdf.set_font("Helvetica", "", 10)
-        pdf.set_text_color(107, 114, 128)
-        pdf.cell(95, 6, _safe(invoice.engagement_name), new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 6, _safe(invoice.engagement_name), new_x="LMARGIN", new_y="NEXT")
+    for line in (bb["addr1"], bb["addr2"]):
+        if line:
+            pdf.cell(0, 6, _safe(line), new_x="LMARGIN", new_y="NEXT")
+    city_postcode = " ".join(p for p in (bb["city"], bb["postcode"]) if p).strip()
+    if city_postcode:
+        pdf.cell(0, 6, _safe(city_postcode), new_x="LMARGIN", new_y="NEXT")
+    if bb["company_reg"]:
+        pdf.cell(0, 6, _safe(f"Company Reg: {bb['company_reg']}"), new_x="LMARGIN", new_y="NEXT")
+    if bb["vat_number"]:
+        pdf.cell(0, 6, _safe(f"VAT Number: {bb['vat_number']}"), new_x="LMARGIN", new_y="NEXT")
+    if bb["po"]:
+        pdf.cell(0, 6, _safe(f"PO Number: {bb['po']}"), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(10)
 
     # Line items table header
@@ -4085,8 +4125,14 @@ def admin_approver_portal():
         return redirect(url_for("index"))
     with Session(engine) as s:
         # Single combined view: one row per (approver-user × engagement-allocation).
-        # Users with role='approver' but no allocations still appear once with
-        # NULL engagement columns, so admins can still reset/deactivate them.
+        # A user appears here when ANY of these are true:
+        #   1. Their primary role is 'approver' (dedicated approver-only login)
+        #   2. They are flagged is_approver = TRUE (any role; capability is
+        #      additive so e.g. an Admin or Associate can also approve)
+        #   3. They have an engagement_approvers allocation
+        # Users matching (1) or (2) but with no allocation still appear once
+        # with NULL engagement columns, so admins can allocate / reset /
+        # deactivate them.
         rows = s.execute(text("""
             SELECT u.id AS user_id, u.name AS user_name, u.email AS user_email,
                    u.role AS user_role, u.is_active, u.last_login,
@@ -4098,6 +4144,7 @@ def admin_approver_portal():
             LEFT JOIN engagement_approvers ea ON ea.user_id = u.id
             LEFT JOIN engagements e ON e.id = ea.engagement_id
             WHERE LOWER(u.role) = 'approver'
+               OR u.is_approver = TRUE
                OR ea.id IS NOT NULL
             ORDER BY u.name, e.client, e.name
         """)).all()
@@ -4129,12 +4176,45 @@ def admin_approver_portal_create():
     with Session(engine) as s:
         existing = s.scalar(select(User).where(User.email == email))
         if existing:
+            # Existing user — flag them as an approver (additive capability;
+            # original role preserved) so they appear in the listing whether
+            # or not an engagement was picked. If an engagement was picked,
+            # also create the engagement_approvers allocation in the same
+            # request so the admin can complete both steps in one click.
+            existing_role = (existing.role or "user")
+            already_flagged = bool(existing.is_approver)
+            existing.is_approver = True
+            alloc_msg = ""
+            if allocate_engagement_id:
+                try:
+                    eng_id = int(allocate_engagement_id)
+                except ValueError:
+                    eng_id = 0
+                if eng_id:
+                    already = s.execute(text(
+                        "SELECT id FROM engagement_approvers WHERE engagement_id = :eid AND user_id = :uid LIMIT 1"
+                    ).bindparams(eid=eng_id, uid=existing.id)).first()
+                    if already:
+                        alloc_msg = " They were already allocated to the selected engagement."
+                    else:
+                        s.add(EngagementApprover(engagement_id=eng_id, user_id=existing.id, role='primary'))
+                        alloc_msg = " Also allocated to the selected engagement."
+            s.commit()
+            try:
+                log_audit_event(
+                    "update", "user_mgmt",
+                    f"Existing {existing_role} user {email} flagged as approver"
+                    + (f" + allocated to engagement {allocate_engagement_id}" if allocate_engagement_id else ""),
+                    "user", existing.id,
+                    {"existing_role": existing_role, "was_already_flagged": already_flagged,
+                     "engagement_id": allocate_engagement_id or None},
+                )
+            except Exception:
+                pass
             flash(
-                f"A user with email {email} already exists. If they are listed as "
-                f"an approver above, use the 'Assign to engagement' control on their "
-                f"row. Otherwise that email already belongs to another OS1 account "
-                f"and can't be reused for an approver.",
-                "warning",
+                f"✅ {existing.name or email} (existing {existing_role} user) is now listed "
+                f"as an approver. Their existing login is unchanged.{alloc_msg}",
+                "success",
             )
             return redirect(url_for("admin_approver_portal"))
         magic_token = secrets.token_urlsafe(32)
@@ -4145,6 +4225,7 @@ def admin_approver_portal_create():
             password_hash=generate_password_hash(secrets.token_urlsafe(32), method='pbkdf2:sha256'),
             role='approver',
             is_active=True,
+            is_approver=True,
             created_at=datetime.datetime.utcnow(),
             magic_token=magic_token,
             magic_token_expires=magic_expires,
@@ -8175,6 +8256,10 @@ class User(Base, UserMixin):
     last_login = Column(DateTime, nullable=True)
     failed_login_attempts = Column(Integer, default=0, nullable=True)
     locked_until = Column(DateTime, nullable=True)
+    # Approver capability flag — separate from `role` so an Admin / Employee
+    # / Associate can ALSO be flagged as an approver without losing their
+    # primary role. Drives inclusion on the Approver Portal Admin listing.
+    is_approver = Column(Boolean, default=False, nullable=True)
     
     # 2FA/MFA columns
     totp_secret = Column(String(32), nullable=True)
@@ -10650,6 +10735,22 @@ try:
             except Exception:
                 # Column already exists — boot-time pattern, harmless.
                 pass
+
+        # --- users.is_approver (approver capability flag, additive) ---
+        try:
+            _rc.execute(text("ALTER TABLE users ADD COLUMN is_approver BOOLEAN DEFAULT FALSE"))
+        except Exception:
+            pass
+        # Backfill: any user already role='approver' is implicitly an
+        # approver and should carry the flag too, so the new query path
+        # treats them consistently.
+        try:
+            _rc.execute(text(
+                "UPDATE users SET is_approver = TRUE "
+                "WHERE LOWER(role) = 'approver' AND (is_approver IS NULL OR is_approver = FALSE)"
+            ))
+        except Exception:
+            pass
 
         # --- timesheet_expenses columns (Phase 2 additive) ---
         for _coldef in (

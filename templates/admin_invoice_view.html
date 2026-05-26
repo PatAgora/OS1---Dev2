@@ -255,9 +255,19 @@
         <div class="col-md-6">
             <div class="client-details">
                 <h3>Bill To</h3>
-                <div class="client-name">{{ invoice.client_name }}</div>
+                {% set eng = invoice.engagement %}
+                <div class="client-name">{{ (eng.client if eng and eng.client else invoice.client_name) or '' }}</div>
                 {% if invoice.engagement_name %}
                 <div class="engagement-name">{{ invoice.engagement_name }}</div>
+                {% endif %}
+                {% if eng %}
+                  {% if eng.billing_address_line1 %}<div>{{ eng.billing_address_line1 }}</div>{% endif %}
+                  {% if eng.billing_address_line2 %}<div>{{ eng.billing_address_line2 }}</div>{% endif %}
+                  {% set cp = ((eng.billing_city or '') ~ ' ' ~ (eng.billing_postcode or ''))|trim %}
+                  {% if cp %}<div>{{ cp }}</div>{% endif %}
+                  {% if eng.client_company_reg %}<div class="text-muted small mt-2">Company Reg: {{ eng.client_company_reg }}</div>{% endif %}
+                  {% if eng.client_vat_number %}<div class="text-muted small">VAT Number: {{ eng.client_vat_number }}</div>{% endif %}
+                  {% if eng.purchase_order_number %}<div class="text-muted small">PO Number: {{ eng.purchase_order_number }}</div>{% endif %}
                 {% endif %}
             </div>
         </div>
