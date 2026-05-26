@@ -50,7 +50,7 @@
                         {% for tt in time_types %}
                         <tr>
                             <td class="text-start"><strong>{{ tt }}</strong>
-                                {% if tt == 'Overtime' %}<small class="text-muted">(hours)</small>
+                                {% if tt == 'Overtime' %}<small class="text-muted">(hours, 0.0 – 12.0 in 0.5 steps)</small>
                                 {% else %}<small class="text-muted">(0.0 / 0.5 / 1.0)</small>{% endif %}
                             </td>
                             {% for d in week %}
@@ -59,11 +59,17 @@
                                 {% set val = entries.get(key) %}
                                 <td>
                                     {% if tt == 'Overtime' %}
-                                    <input type="number" step="0.25" min="0"
-                                           class="form-control form-control-sm text-end"
-                                           name="entry_{{ iso }}_{{ tt.replace(' ', '__') }}"
-                                           value="{{ val if val else '' }}"
-                                           style="max-width:88px; margin:0 auto;">
+                                    {# Half-hour OT dropdown 0.0 – 12.0,
+                                       matching the Associate Portal. #}
+                                    <select class="form-select form-select-sm text-center"
+                                            name="entry_{{ iso }}_{{ tt.replace(' ', '__') }}"
+                                            style="max-width:88px; margin:0 auto;">
+                                        {% set ot_v = (val|float) if val not in (None, '', 0) else 0.0 %}
+                                        {% for half in range(0, 25) %}
+                                            {% set opt_val = (half * 0.5) %}
+                                            <option value="{{ '%g' % opt_val }}" {% if ot_v == opt_val %}selected{% endif %}>{{ '%.1f'|format(opt_val) }}</option>
+                                        {% endfor %}
+                                    </select>
                                     {% else %}
                                     <select class="form-select form-select-sm text-center"
                                             name="entry_{{ iso }}_{{ tt.replace(' ', '__') }}"

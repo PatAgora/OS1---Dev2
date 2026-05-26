@@ -125,10 +125,21 @@
                             {% set entry_val = entries.get(entry_key, {}).get('value', '') %}
                             <td style="text-align: center; padding: 4px;">
                                 {% if 'overtime' in tt.lower() %}
-                                <input type="text" name="entry_{{ day.date }}_{{ tt.replace(' ', '__') }}"
-                                       value="{{ entry_val if entry_val else '' }}"
-                                       placeholder="0:00" class="form-control form-control-sm text-center ts-input ts-hours"
-                                       style="width: 84px; margin: 0 auto;" data-type="hours">
+                                {# Overtime in half-hour increments (0.0 – 12.0)
+                                   to match the day-cell 0.0/0.5/1.0 dropdown
+                                   pattern. 12 hours covers any realistic OT
+                                   day; a recruiter sets larger values via
+                                   /admin/timesheets/<id>/edit-on-behalf. #}
+                                <select name="entry_{{ day.date }}_{{ tt.replace(' ', '__') }}"
+                                        class="form-select form-select-sm text-center ts-input ts-hours"
+                                        style="width: 84px; margin: 0 auto;" data-type="hours">
+                                    {% set ot_val = (entry_val|float) if entry_val not in (None, '', 0) else 0.0 %}
+                                    {% for half in range(0, 25) %}
+                                        {% set opt_val = (half * 0.5) %}
+                                        {% set selected_attr = 'selected' if (ot_val == opt_val) or (not entry_val and opt_val == 0) else '' %}
+                                        <option value="{{ '%g' % opt_val }}" {{ selected_attr }}>{{ '%.1f'|format(opt_val) }}</option>
+                                    {% endfor %}
+                                </select>
                                 {% else %}
                                 <select name="entry_{{ day.date }}_{{ tt.replace(' ', '__') }}"
                                         class="form-select form-select-sm text-center ts-input ts-days"
