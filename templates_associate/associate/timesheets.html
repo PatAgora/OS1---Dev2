@@ -218,61 +218,6 @@
                timesheet rebuilt them and dropped the category / VAT / receipt
                captured by the proper Add Expense form. #}
 
-            <!-- Summary Panel -->
-            <div style="padding: 20px; border-top: 2px solid var(--color-gray-200); display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 16px;">
-                <div>
-                    <div class="text-muted text-xs">Billable Days</div>
-                    <div class="font-semibold" id="summaryDays">{{ "%.1f"|format(current_ts.billable_days or 0) }}</div>
-                </div>
-                <div>
-                    <div class="text-muted text-xs">Billable Hours (OT)</div>
-                    <div class="font-semibold" id="summaryHours">{{ "%.1f"|format(current_ts.billable_hours or 0) }}</div>
-                </div>
-                <div>
-                    <div class="text-muted text-xs">Day Rate Amount</div>
-                    <div class="font-semibold" id="summaryDayAmount">&pound;{{ "%.2f"|format((current_ts.billable_days or 0) * (current_ts.day_rate or 0)) }}</div>
-                </div>
-                <div>
-                    <div class="text-muted text-xs">OT Amount</div>
-                    {% set _ot_rate = current_ts.overtime_rate if current_ts.overtime_rate else ((current_ts.day_rate or 0) / 7.5) %}
-                    <div class="font-semibold" id="summaryOTAmount">&pound;{{ "%.2f"|format((current_ts.billable_hours or 0) * _ot_rate) }}</div>
-                </div>
-                <div>
-                    <div class="text-muted text-xs">Expenses</div>
-                    <div class="font-semibold" id="summaryExpenses">&pound;{{ "%.2f"|format(current_ts.expense_total or 0) }}</div>
-                </div>
-                <div>
-                    <div class="text-muted text-xs text-success font-weight-bold">Total Amount</div>
-                    <div class="font-semibold" style="color: var(--color-success); font-size: 18px;" id="summaryTotal">&pound;{{ "%.2f"|format(current_ts.grand_total or current_ts.total_amount or 0) }}</div>
-                </div>
-            </div>
-
-            <!-- Buttons: editable on Draft / Unsubmitted / Rejected (TS 5);
-                 locked once Submitted or Approved. -->
-            {% if current_ts and current_ts.status in _editable_statuses %}
-            <div style="padding: 16px 20px; border-top: 1px solid var(--color-gray-200); display: flex; gap: 12px; flex-wrap: wrap;">
-                <button type="submit" class="btn btn-outline-primary">
-                    <i class="fas fa-save me-1"></i> Save Draft
-                </button>
-                <button type="submit" formaction="/portal/timesheets/submit" class="btn btn-primary">
-                    <i class="fas fa-paper-plane me-1"></i>
-                    {% if current_ts.status == 'Rejected' %}Re-submit Timesheet{% else %}Submit Timesheet{% endif %}
-                </button>
-                <button type="submit" formaction="/portal/timesheets/cancel" class="btn btn-outline-danger ms-auto" onclick="return confirm('Cancel this timesheet?');">
-                    <i class="fas fa-times me-1"></i> Cancel Timesheet
-                </button>
-            </div>
-            {% else %}
-            <div style="padding: 16px 20px; border-top: 1px solid var(--color-gray-200);">
-                <span class="badge" style="background:#d1fae5;color:#059669;padding:8px 16px;font-size:13px;">
-                    <i class="fas fa-lock me-1"></i> Timesheet {{ current_ts.status if current_ts else '' }} — editing locked
-                </span>
-            </div>
-            {% endif %}
-        </form>
-    </div>
-</div>
-
 <!-- Expenses -->
 {% if expense_enabled %}
 {% set ts_editable = current_ts and (current_ts.status in ('Draft', 'Unsubmitted', None, '') or current_ts.status == 'Rejected') %}
@@ -440,6 +385,61 @@
     </div>
 </div>
 {% endif %}
+            <!-- Summary Panel -->
+            <div style="padding: 20px; border-top: 2px solid var(--color-gray-200); display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 16px;">
+                <div>
+                    <div class="text-muted text-xs">Billable Days</div>
+                    <div class="font-semibold" id="summaryDays">{{ "%.1f"|format(current_ts.billable_days or 0) }}</div>
+                </div>
+                <div>
+                    <div class="text-muted text-xs">Billable Hours (OT)</div>
+                    <div class="font-semibold" id="summaryHours">{{ "%.1f"|format(current_ts.billable_hours or 0) }}</div>
+                </div>
+                <div>
+                    <div class="text-muted text-xs">Day Rate Amount</div>
+                    <div class="font-semibold" id="summaryDayAmount">&pound;{{ "%.2f"|format((current_ts.billable_days or 0) * (current_ts.day_rate or 0)) }}</div>
+                </div>
+                <div>
+                    <div class="text-muted text-xs">OT Amount</div>
+                    {% set _ot_rate = current_ts.overtime_rate if current_ts.overtime_rate else ((current_ts.day_rate or 0) / 7.5) %}
+                    <div class="font-semibold" id="summaryOTAmount">&pound;{{ "%.2f"|format((current_ts.billable_hours or 0) * _ot_rate) }}</div>
+                </div>
+                <div>
+                    <div class="text-muted text-xs">Expenses</div>
+                    <div class="font-semibold" id="summaryExpenses">&pound;{{ "%.2f"|format(current_ts.expense_total or 0) }}</div>
+                </div>
+                <div>
+                    <div class="text-muted text-xs text-success font-weight-bold">Total Amount</div>
+                    <div class="font-semibold" style="color: var(--color-success); font-size: 18px;" id="summaryTotal">&pound;{{ "%.2f"|format(current_ts.grand_total or current_ts.total_amount or 0) }}</div>
+                </div>
+            </div>
+
+            <!-- Buttons: editable on Draft / Unsubmitted / Rejected (TS 5);
+                 locked once Submitted or Approved. -->
+            {% if current_ts and current_ts.status in _editable_statuses %}
+            <div style="padding: 16px 20px; border-top: 1px solid var(--color-gray-200); display: flex; gap: 12px; flex-wrap: wrap;">
+                <button type="submit" class="btn btn-outline-primary">
+                    <i class="fas fa-save me-1"></i> Save Draft
+                </button>
+                <button type="submit" formaction="/portal/timesheets/submit" class="btn btn-primary">
+                    <i class="fas fa-paper-plane me-1"></i>
+                    {% if current_ts.status == 'Rejected' %}Re-submit Timesheet{% else %}Submit Timesheet{% endif %}
+                </button>
+                <button type="submit" formaction="/portal/timesheets/cancel" class="btn btn-outline-danger ms-auto" onclick="return confirm('Cancel this timesheet?');">
+                    <i class="fas fa-times me-1"></i> Cancel Timesheet
+                </button>
+            </div>
+            {% else %}
+            <div style="padding: 16px 20px; border-top: 1px solid var(--color-gray-200);">
+                <span class="badge" style="background:#d1fae5;color:#059669;padding:8px 16px;font-size:13px;">
+                    <i class="fas fa-lock me-1"></i> Timesheet {{ current_ts.status if current_ts else '' }} — editing locked
+                </span>
+            </div>
+            {% endif %}
+        </form>
+    </div>
+</div>
+
 {% endif %}
 
 <!-- Previous Timesheets (Monthly Bundles) -->
