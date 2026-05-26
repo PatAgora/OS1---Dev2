@@ -4641,8 +4641,8 @@ def timesheets_new():
         ).first()
         if existing:
             flash(
-                f"A timesheet for that week already exists (status: {existing.status}). "
-                f"Opening the existing one instead of creating a duplicate.",
+                "A timesheet for that week already exists. "
+                "Opening the existing one instead of creating a duplicate.",
                 "info"
             )
             return redirect(url_for("associate.timesheets"))
