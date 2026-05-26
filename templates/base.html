@@ -450,6 +450,12 @@
             <i class="fas fa-user-check"></i><span>Approver Portal Admin</span>
           </a>
           {% endif %}
+          {% if view_exists('admin_timesheets') %}
+          <a href="{{ url_for('admin_timesheets') }}"
+             class="{% if request.endpoint in ['admin_timesheets', 'admin_edit_timesheet_on_behalf', 'admin_create_adjustment'] %}active{% endif %}">
+            <i class="fas fa-clock"></i><span>Timesheets</span>
+          </a>
+          {% endif %}
           {% if view_exists('admin_approvals') %}
           <a href="{{ url_for('admin_approvals') }}"
              class="{% if request.endpoint == 'admin_approvals' %}active{% endif %}">

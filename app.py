@@ -1867,13 +1867,15 @@ def _approver_timesheet_query(user_id, status_filter=None):
 @login_required
 def admin_timesheets():
     """Phase 4 / TS 19 — every timesheet across every placement with
-    status / WC / approver / last-action timestamp. Filterable. Drill-
-    through to the existing approver detail view."""
+    status / WC / approver / last-action timestamp. Filterable by client,
+    project, associate, status, type, WC. Drill-through to Edit on
+    behalf; Approve / Decline inline for Submitted rows."""
     if (current_user.role or "").lower() != "admin":
         flash("Admin access required.", "danger")
         return redirect(url_for("index"))
     client_filter = (request.args.get("client") or "").strip()
     project_filter = (request.args.get("project") or "").strip()
+    associate_filter = (request.args.get("associate") or "").strip()
     status_filter = (request.args.get("status") or "").strip().lower()
     wc_filter = (request.args.get("wc") or "").strip()
     type_filter = (request.args.get("type") or "").strip().lower()
@@ -1882,9 +1884,11 @@ def admin_timesheets():
                t.submitted_at, t.approved_at, t.user_id, t.engagement_id,
                COALESCE(t.timesheet_type,'Standard') AS ts_type,
                t.originating_timesheet_id,
-               e.name AS engagement_name, e.client AS client_name
+               e.name AS engagement_name, e.client AS client_name,
+               c.name AS associate_name
         FROM timesheets t
         LEFT JOIN engagements e ON e.id = t.engagement_id
+        LEFT JOIN candidates c ON c.id = t.user_id
         WHERE 1=1
     """
     params = {}
@@ -1894,6 +1898,9 @@ def admin_timesheets():
     if project_filter:
         sql += " AND e.name = :project"
         params["project"] = project_filter
+    if associate_filter:
+        sql += " AND c.name = :associate"
+        params["associate"] = associate_filter
     if status_filter and status_filter != "all":
         sql += " AND LOWER(t.status) = :status"
         params["status"] = status_filter
@@ -1906,19 +1913,20 @@ def admin_timesheets():
     sql += " ORDER BY t.period_start DESC, t.id DESC LIMIT 1000"
     with Session(engine) as s:
         rows = s.execute(text(sql).bindparams(**params)).all()
-        cand_ids = list({r.user_id for r in rows if r.user_id})
-        names = {}
-        if cand_ids:
-            for cid, nm in s.execute(text(
-                "SELECT id, name FROM candidates WHERE id IN :ids"
-            ).bindparams(ids=tuple(cand_ids))).all():
-                names[cid] = nm
         # Distinct filter dropdown options across all timesheets.
         clients = [r[0] for r in s.execute(text(
             "SELECT DISTINCT client FROM engagements WHERE client IS NOT NULL AND TRIM(client) <> '' ORDER BY client"
         )).all()]
         projects = [r[0] for r in s.execute(text(
             "SELECT DISTINCT name FROM engagements WHERE name IS NOT NULL AND TRIM(name) <> '' ORDER BY name"
+        )).all()]
+        # Associates with at least one timesheet — drives the new
+        # Associate filter dropdown.
+        associates = [r[0] for r in s.execute(text(
+            "SELECT DISTINCT c.name FROM candidates c "
+            "JOIN timesheets t ON t.user_id = c.id "
+            "WHERE c.name IS NOT NULL AND TRIM(c.name) <> '' "
+            "ORDER BY c.name"
         )).all()]
     timesheets = [
         {
@@ -1929,7 +1937,7 @@ def admin_timesheets():
             "billable_days": r.billable_days or 0,
             "submitted_at": r.submitted_at,
             "approved_at": r.approved_at,
-            "associate_name": names.get(r.user_id, "(unknown)"),
+            "associate_name": r.associate_name or "(unknown)",
             "engagement_name": r.engagement_name or "",
             "client_name": r.client_name or "",
             "ts_type": r.ts_type or "Standard",
@@ -1942,12 +1950,55 @@ def admin_timesheets():
         timesheets=timesheets,
         clients=clients,
         projects=projects,
+        associates=associates,
         client_filter=client_filter,
         project_filter=project_filter,
+        associate_filter=associate_filter,
         status_filter=status_filter or "all",
         type_filter=type_filter or "all",
         wc_filter=wc_filter,
     )
+
+
+@app.route("/admin/timesheets/<int:ts_id>/approve", methods=["POST"])
+@login_required
+def admin_ts_approve(ts_id):
+    """Admin Approve from /admin/timesheets row — uses the canonical
+    _apply_timesheet_approval helper (same path the Approver Portal
+    uses) so the status transition, expense-line stamping (TS 31)
+    and audit log all stay consistent."""
+    if (current_user.role or "").lower() != "admin":
+        flash("Admin access required.", "danger")
+        return redirect(url_for("admin_timesheets"))
+    with Session(engine) as s:
+        ts = s.get(Timesheet, ts_id)
+        if not ts:
+            flash("Timesheet not found.", "warning")
+            return redirect(url_for("admin_timesheets"))
+        _apply_timesheet_approval(s, ts, current_user.id)
+        s.commit()
+    flash(f"Timesheet #{ts_id} approved.", "success")
+    return redirect(url_for("admin_timesheets"))
+
+
+@app.route("/admin/timesheets/<int:ts_id>/reject", methods=["POST"])
+@login_required
+def admin_ts_reject(ts_id):
+    """Admin Decline from /admin/timesheets row. Reason is optional
+    (associate sees it as the rejection_reason banner)."""
+    if (current_user.role or "").lower() != "admin":
+        flash("Admin access required.", "danger")
+        return redirect(url_for("admin_timesheets"))
+    reason = (request.form.get("reject_reason") or "").strip()
+    with Session(engine) as s:
+        ts = s.get(Timesheet, ts_id)
+        if not ts:
+            flash("Timesheet not found.", "warning")
+            return redirect(url_for("admin_timesheets"))
+        _apply_timesheet_rejection(s, ts, current_user.id, reason)
+        s.commit()
+    flash(f"Timesheet #{ts_id} declined.", "success")
+    return redirect(url_for("admin_timesheets"))
 
 
 @app.route("/admin/timesheets/<int:ts_id>/create-adjustment", methods=["GET", "POST"])

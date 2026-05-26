@@ -1,21 +1,16 @@
 {% extends "base.html" %}
 
-{% block title %}All Timesheets · OS1{% endblock %}
+{% block title %}Timesheets · OS1{% endblock %}
 
 {% block content %}
 <div class="container-fluid px-4 pt-3 pb-4">
 
 <div class="page-header mb-4">
-    <div class="d-flex justify-content-between align-items-center">
-        <div>
-            <h1 style="color:#fff;"><i class="fas fa-list me-2"></i>All Timesheets</h1>
-            <p style="color:rgba(255,255,255,0.8);" class="mb-0">
-                Every timesheet across every placement (Phase 4 / TS 19).
-            </p>
-        </div>
-        <a href="{{ url_for('admin_approvals') }}" class="btn btn-outline-light">
-            <i class="fas fa-clipboard-check me-1"></i> Approvals queue
-        </a>
+    <div>
+        <h1 style="color:#fff;"><i class="fas fa-clock me-2"></i>Timesheets</h1>
+        <p style="color:rgba(255,255,255,0.8);" class="mb-0">
+            Every submitted, approved, declined, or draft timesheet across every placement. Filter, approve, decline, amend, or re-open.
+        </p>
     </div>
 </div>
 
@@ -46,16 +41,23 @@
         </select>
     </div>
     <div class="col-md-2">
+        <label class="form-label small">Associate</label>
+        <select name="associate" class="form-select form-select-sm">
+            <option value="">All</option>
+            {% for a in associates %}<option value="{{ a }}" {% if a == associate_filter %}selected{% endif %}>{{ a }}</option>{% endfor %}
+        </select>
+    </div>
+    <div class="col-md-2">
         <label class="form-label small">Status</label>
         <select name="status" class="form-select form-select-sm">
             <option value="all" {% if status_filter == 'all' %}selected{% endif %}>All</option>
             <option value="draft" {% if status_filter == 'draft' %}selected{% endif %}>Draft</option>
             <option value="submitted" {% if status_filter == 'submitted' %}selected{% endif %}>Submitted</option>
             <option value="approved" {% if status_filter == 'approved' %}selected{% endif %}>Approved</option>
-            <option value="rejected" {% if status_filter == 'rejected' %}selected{% endif %}>Rejected</option>
+            <option value="rejected" {% if status_filter == 'rejected' %}selected{% endif %}>Declined</option>
         </select>
     </div>
-    <div class="col-md-2">
+    <div class="col-md-1">
         <label class="form-label small">Type</label>
         <select name="type" class="form-select form-select-sm">
             <option value="all" {% if type_filter == 'all' %}selected{% endif %}>All</option>
@@ -67,7 +69,7 @@
         <label class="form-label small">WC date</label>
         <input type="date" name="wc" class="form-control form-control-sm" value="{{ wc_filter }}">
     </div>
-    <div class="col-md-2">
+    <div class="col-md-1">
         <button class="btn btn-sm btn-primary w-100"><i class="fas fa-filter me-1"></i>Apply</button>
     </div>
 </form>
@@ -115,8 +117,23 @@
                         {% else %}<span class="badge bg-secondary">{{ t.status }}</span>{% endif %}
                     </td>
                     <td>{{ t.submitted_at.strftime('%d/%m %H:%M') if t.submitted_at else '—' }}</td>
-                    <td class="text-end">
-                        <a href="{{ url_for('admin_edit_timesheet_on_behalf', ts_id=t.id) }}" class="btn btn-sm btn-outline-primary me-1">View</a>
+                    <td class="text-end" style="white-space: nowrap;">
+                        <a href="{{ url_for('admin_edit_timesheet_on_behalf', ts_id=t.id) }}" class="btn btn-sm btn-outline-primary me-1">View / Amend</a>
+                        {% if (t.status or '')|lower == 'submitted' %}
+                        <form method="POST" action="{{ url_for('admin_ts_approve', ts_id=t.id) }}" class="d-inline"
+                              onsubmit="return confirm('Approve TS-{{ '%04d' % t.id }} for {{ t.associate_name }}?');">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button class="btn btn-sm btn-success" title="Approve"><i class="fas fa-check"></i> Approve</button>
+                        </form>
+                        <button type="button" class="btn btn-sm btn-danger" title="Decline"
+                                onclick="(function(){var r=prompt('Reason for declining TS-{{ '%04d' % t.id }} (optional, shown to the Associate):',''); if (r===null) return; var f=document.getElementById('decline-form-{{ t.id }}'); f.querySelector('input[name=reject_reason]').value=r; f.submit();})();">
+                            <i class="fas fa-times"></i> Decline
+                        </button>
+                        <form method="POST" action="{{ url_for('admin_ts_reject', ts_id=t.id) }}" id="decline-form-{{ t.id }}" class="d-none">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="reject_reason" value="">
+                        </form>
+                        {% endif %}
                         {% if (t.status or '')|lower == 'approved' and t.ts_type != 'Adjustment' %}
                         <a href="{{ url_for('admin_create_adjustment', ts_id=t.id) }}" class="btn btn-sm btn-outline-warning me-1">Adjust</a>
                         <form method="POST" action="{{ url_for('admin_reopen_timesheet', ts_id=t.id) }}" class="d-inline"
