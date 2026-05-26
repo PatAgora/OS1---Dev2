@@ -1724,20 +1724,6 @@ def _admin_approvals_inner():
                            leave_reasons=leave_reasons)
 
 
-@app.route("/admin/approvals/timesheet/<int:ts_id>/approve", methods=["POST"])
-@login_required
-def admin_approve_timesheet(ts_id):
-    with Session(engine) as s:
-        ts = s.get(Timesheet, ts_id)
-        if ts:
-            _apply_timesheet_approval(s, ts, current_user.id)
-            s.commit()
-            flash(f"Timesheet #{ts_id} approved.", "success")
-        else:
-            flash("Timesheet not found.", "warning")
-    return redirect(url_for("admin_approvals"))
-
-
 # ============================================================================
 # Phase 3 — Approver Portal (TS 10, 16-23, 30, 31)
 # ============================================================================
@@ -2122,20 +2108,6 @@ def admin_edit_timesheet_on_behalf(ts_id):
                            time_types=["Standard Time", "Holiday", "Sickness", "Overtime"])
 
 
-# Update admin_reject_timesheet to share the helper, too.
-def _admin_reject_via_helper(ts_id):
-    reason = (request.form.get("reject_reason") or "").strip()
-    with Session(engine) as s:
-        ts = s.get(Timesheet, ts_id)
-        if not ts:
-            flash("Timesheet not found.", "warning")
-            return redirect(url_for("admin_approvals"))
-        _apply_timesheet_rejection(s, ts, current_user.id, reason)
-        s.commit()
-    flash(f"Timesheet #{ts_id} rejected.", "success")
-    return redirect(url_for("admin_approvals"))
-
-
 @app.route("/admin/leave-reasons/add", methods=["POST"])
 @login_required
 def admin_add_leave_reason():
@@ -2237,40 +2209,20 @@ def admin_reject_leave(lr_id):
     return redirect(url_for("admin_approvals"))
 
 
-@app.route("/admin/approvals/timesheet/<int:ts_id>/reject", methods=["POST"])
-@login_required
-def admin_reject_timesheet(ts_id):
-    reason = (request.form.get("reject_reason") or "").strip()
-    with Session(engine) as s:
-        ts = s.get(Timesheet, ts_id)
-        if ts:
-            ts.status = "Rejected"
-            if reason:
-                try:
-                    s.execute(text(
-                        "UPDATE timesheets SET rejection_reason = :reason WHERE id = :tid"
-                    ).bindparams(reason=reason, tid=ts_id))
-                except Exception:
-                    pass
-            s.commit()
-            flash(f"Timesheet #{ts_id} rejected.", "success")
-        else:
-            flash("Timesheet not found.", "warning")
-    return redirect(url_for("admin_approvals"))
-
-@app.route("/admin/approvals/timesheet/<int:ts_id>/reopen", methods=["POST"])
+@app.route("/admin/timesheets/<int:ts_id>/reopen", methods=["POST"])
 @login_required
 def admin_reopen_timesheet(ts_id):
     """Phase 1 / TS 6 — admin-only re-open of an Approved timesheet so the
-    associate can amend and re-submit. Audit-logged."""
+    associate can amend and re-submit. Audit-logged. Called from the Re-open
+    button on the all-engagements timesheet list (/admin/timesheets)."""
     if (current_user.role or "").lower() != "admin":
         flash("Admin access required.", "danger")
-        return redirect(url_for("admin_approvals"))
+        return redirect(url_for("admin_timesheets"))
     with Session(engine) as s:
         ts = s.get(Timesheet, ts_id)
         if not ts:
             flash("Timesheet not found.", "warning")
-            return redirect(url_for("admin_approvals"))
+            return redirect(url_for("admin_timesheets"))
         old_status = ts.status
         ts.status = "Draft"
         # Clear approval stamps so the new submit gets a fresh approval.
@@ -2284,7 +2236,7 @@ def admin_reopen_timesheet(ts_id):
         except Exception:
             pass
     flash(f"Timesheet #{ts_id} re-opened (was {old_status}). The associate can now amend and re-submit.", "success")
-    return redirect(url_for("admin_approvals"))
+    return redirect(url_for("admin_timesheets"))
 
 
 @app.route("/admin/invoices")
