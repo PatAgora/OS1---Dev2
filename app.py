@@ -4265,6 +4265,42 @@ def admin_approver_portal_reset(user_id: int):
     return redirect(url_for("admin_approver_portal"))
 
 
+@app.route("/admin/approver-portal/<int:user_id>/reset-2fa", methods=["POST"])
+@login_required
+def admin_approver_portal_reset_2fa(user_id: int):
+    """Reset the APPROVER-side 2FA only — clears approver_totp_secret
+    and disables approver_totp_enabled. The user's main OS1 2FA (if
+    any) is intentionally untouched: these are two independent
+    enrolments. Audit-logged so we know who cleared whose."""
+    if (current_user.role or "").lower() not in ("admin", "super_admin"):
+        flash("Admin access required.", "danger")
+        return redirect(url_for("admin_approver_portal"))
+    with Session(engine) as s:
+        u = s.get(User, user_id)
+        if not u:
+            flash("User not found.", "warning")
+            return redirect(url_for("admin_approver_portal"))
+        had_2fa = bool(getattr(u, "approver_totp_enabled", False)
+                       and getattr(u, "approver_totp_secret", None))
+        u.approver_totp_secret = None
+        u.approver_totp_enabled = False
+        s.commit()
+        try:
+            log_audit_event(
+                "update", "user_mgmt",
+                f"Approver 2FA reset for {u.email} (was_enabled={had_2fa})",
+                "user", user_id, {"approver_totp_enabled_before": had_2fa},
+            )
+        except Exception:
+            pass
+    if had_2fa:
+        flash(f"Approver 2FA cleared for {u.email}. They will not be prompted for "
+              f"a code on next sign-in until they re-enrol.", "success")
+    else:
+        flash(f"{u.email} had no approver 2FA configured — nothing to clear.", "info")
+    return redirect(url_for("admin_approver_portal"))
+
+
 @app.route("/admin/approver-portal/<int:user_id>/deactivate", methods=["POST"])
 @login_required
 def admin_approver_portal_deactivate(user_id: int):

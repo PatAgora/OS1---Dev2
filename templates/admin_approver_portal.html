@@ -108,11 +108,18 @@
                         </form>
                         {% endif %}
                         <form method="POST" action="{{ url_for('admin_approver_portal_reset', user_id=r.user_id) }}"
-                              class="d-inline" onsubmit="return confirm('Generate a password-reset magic link for {{ r.user_email }}?');">
+                              class="d-inline" onsubmit="return confirm('Generate a password-reset magic link for {{ r.user_email }}? This resets the Approver Portal password only — their OS1 main login (if any) is not affected.');">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <input type="hidden" name="send_email" value="1">
-                            <button class="btn btn-sm btn-outline-primary" title="Reset password (sends magic link)">
+                            <button class="btn btn-sm btn-outline-primary" title="Reset Approver Portal password (sends magic link)">
                                 <i class="fas fa-key"></i>
+                            </button>
+                        </form>
+                        <form method="POST" action="{{ url_for('admin_approver_portal_reset_2fa', user_id=r.user_id) }}"
+                              class="d-inline" onsubmit="return confirm('Reset {{ r.user_email }}\\'s Approver Portal 2FA? Their authenticator enrolment for /approver will be cleared — they\\'ll be able to sign in without a code on next login and can re-enrol from inside the portal. This does NOT touch any OS1 main-login 2FA they may have.');">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button class="btn btn-sm btn-outline-warning" title="Reset Approver Portal 2FA (clears authenticator enrolment for /approver only)">
+                                <i class="fas fa-mobile-alt"></i>
                             </button>
                         </form>
                         {% if r_inactive %}
