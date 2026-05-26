@@ -178,14 +178,22 @@ def logout():
 
 @approver_bp.route("/onboard/<token>", methods=["GET", "POST"])
 def onboard(token):
-    """Magic-link landing for a newly-created approver: set a password,
-    then they're signed straight into the portal."""
+    """Magic-link landing for an approver-capable user. Accepts the user
+    when their primary role is 'approver' OR when they carry the
+    additive is_approver=True capability flag (set when an Admin /
+    Employee / Associate is also granted approver access on the
+    Approver Portal Admin page). Sets a password (or refreshes the
+    existing one), then signs them straight in."""
     User = _model("User")
     with SASession(_engine()) as s:
         u = s.execute(
             select(User).where(User.magic_token == token)
         ).scalars().first()
-        if not u or (u.role or "").lower() != "approver":
+        is_approver_capable = bool(u and (
+            (u.role or "").lower() == "approver"
+            or getattr(u, "is_approver", False)
+        ))
+        if not u or not is_approver_capable:
             flash("This invite link is invalid.", "danger")
             return redirect(url_for("approver.login"))
         expires = getattr(u, "magic_token_expires", None)
