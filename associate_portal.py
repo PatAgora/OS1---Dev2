@@ -5457,6 +5457,24 @@ def api_edit_entry(entry_id):
 # P6: EXPENSE INPUT ON TIMESHEETS
 # =========================================================================
 
+def _expense_redirect_back(ts):
+    """Return the right redirect target for an expense add/edit/delete
+    so the Associate stays on the page they were just on:
+
+      - If the timesheet they were working with is Rejected, send them
+        back to /portal/timesheets?edit=<ts.id> (the Rejected re-edit
+        view) — that's the URL they came from.
+      - Otherwise send them to /portal/timesheets (the normal view
+        where their Draft would be loaded as the current TS).
+
+    Keeps flash messages (oversized receipt, wrong MIME, missing
+    receipt etc.) visible on the page where the Associate triggered
+    the action rather than bouncing them to a different page."""
+    if ts is not None and (getattr(ts, "status", "") or "").lower() == "rejected":
+        return redirect(url_for("associate.timesheets") + "?edit=" + str(ts.id))
+    return redirect(url_for("associate.timesheets"))
+
+
 @associate_bp.route("/timesheets/add-expense", methods=["POST"])
 @_require_login
 def timesheets_add_expense():
@@ -5469,7 +5487,7 @@ def timesheets_add_expense():
     ts_id = request.form.get("timesheet_id", type=int)
     if not ts_id or not TimesheetExpense:
         flash("Cannot add expense.", "danger")
-        return redirect(url_for("associate.timesheets"))
+        return _expense_redirect_back(locals().get("ts"))
 
     # Phase 2 / TS 14 — receipt size + type limits before we touch the DB.
     MAX_RECEIPT_BYTES = 5 * 1024 * 1024  # 5 MB
@@ -5478,12 +5496,12 @@ def timesheets_add_expense():
         ts = s.get(Timesheet, ts_id)
         if not ts or ts.user_id != cand_id:
             flash("Timesheet not found.", "danger")
-            return redirect(url_for("associate.timesheets"))
+            return _expense_redirect_back(locals().get("ts"))
 
         # Phase 2 / TS 13 — Rejected unlocks editing same as Draft.
         if (ts.status or "").lower() not in ("draft", "unsubmitted", "rejected", "", None):
             flash("Expenses can only be added to draft or rejected timesheets.", "warning")
-            return redirect(url_for("associate.timesheets"))
+            return _expense_redirect_back(locals().get("ts"))
 
         # Phase 2 / TS 12 — category-driven VAT. The form may submit:
         #   expense_category_id (new path) — preferred when the portal UI
@@ -5547,7 +5565,7 @@ def timesheets_add_expense():
                 distance_miles = 0
             if distance_miles <= 0:
                 flash("Please enter a positive distance in miles for the mileage expense.", "danger")
-                return redirect(url_for("associate.timesheets"))
+                return _expense_redirect_back(locals().get("ts"))
             amount = round(distance_miles * hmrc_rate, 2)
         else:
             try:
@@ -5556,7 +5574,7 @@ def timesheets_add_expense():
                 amount = 0
             if amount <= 0:
                 flash("Expense amount must be greater than zero.", "danger")
-                return redirect(url_for("associate.timesheets"))
+                return _expense_redirect_back(locals().get("ts"))
 
         vat_amount = round(amount * (vat_pct / 100.0), 2)
 
@@ -5568,12 +5586,12 @@ def timesheets_add_expense():
         receipt_file = request.files.get("expense_receipt")
         if not is_mileage_cat and not (receipt_file and receipt_file.filename):
             flash("A receipt is required for this expense category. Please attach a PDF, JPG or PNG (max 5 MB).", "danger")
-            return redirect(url_for("associate.timesheets"))
+            return _expense_redirect_back(locals().get("ts"))
         if receipt_file and receipt_file.filename:
             ext = os.path.splitext(receipt_file.filename)[1].lower().lstrip(".")
             if ext not in {"pdf", "jpg", "jpeg", "png"}:
                 flash("Receipt must be a PDF, JPG, JPEG or PNG file.", "danger")
-                return redirect(url_for("associate.timesheets"))
+                return _expense_redirect_back(locals().get("ts"))
             # Size check — read once for size, then seek back.
             try:
                 receipt_file.stream.seek(0, 2)  # to end
@@ -5583,7 +5601,7 @@ def timesheets_add_expense():
                 size = 0
             if size and size > MAX_RECEIPT_BYTES:
                 flash(f"Receipt is too large ({size // 1024} KB). Maximum is 5 MB.", "danger")
-                return redirect(url_for("associate.timesheets"))
+                return _expense_redirect_back(locals().get("ts"))
             saved = _save_file(receipt_file)
             if saved:
                 Document = _model("Document")
@@ -5620,7 +5638,7 @@ def timesheets_add_expense():
         s.commit()
 
     flash(f"Expense added: {expense_type} - GBP{amount:.2f}.", "success")
-    return redirect(url_for("associate.timesheets"))
+    return _expense_redirect_back(locals().get("ts"))
 
 
 @associate_bp.route("/timesheets/edit-expense/<int:expense_id>", methods=["POST"])
@@ -5637,14 +5655,14 @@ def timesheets_edit_expense(expense_id):
         expense = s.get(TimesheetExpense, expense_id) if TimesheetExpense else None
         if not expense:
             flash("Expense not found.", "danger")
-            return redirect(url_for("associate.timesheets"))
+            return _expense_redirect_back(locals().get("ts"))
         ts = s.get(Timesheet, expense.timesheet_id)
         if not ts or ts.user_id != cand_id:
             flash("Timesheet not found.", "danger")
-            return redirect(url_for("associate.timesheets"))
+            return _expense_redirect_back(locals().get("ts"))
         if (ts.status or "").lower() not in ("draft", "unsubmitted", "rejected", "", None):
             flash("Expenses can only be edited on draft or rejected timesheets.", "warning")
-            return redirect(url_for("associate.timesheets"))
+            return _expense_redirect_back(locals().get("ts"))
 
         # Pull current HMRC rate.
         try:
@@ -5711,7 +5729,7 @@ def timesheets_edit_expense(expense_id):
         ts.grand_total = (ts.total_amount or 0) + ts.expense_total
         s.commit()
     flash("Expense updated.", "success")
-    return redirect(url_for("associate.timesheets"))
+    return _expense_redirect_back(locals().get("ts"))
 
 
 @associate_bp.route("/timesheets/delete-expense/<int:expense_id>", methods=["POST"])
@@ -5727,17 +5745,17 @@ def timesheets_delete_expense(expense_id):
         expense = s.get(TimesheetExpense, expense_id) if TimesheetExpense else None
         if not expense:
             flash("Expense not found.", "danger")
-            return redirect(url_for("associate.timesheets"))
+            return _expense_redirect_back(locals().get("ts"))
 
         ts = s.get(Timesheet, expense.timesheet_id)
         if not ts or ts.user_id != cand_id:
             flash("Timesheet not found.", "danger")
-            return redirect(url_for("associate.timesheets"))
+            return _expense_redirect_back(locals().get("ts"))
 
         # TS 5/27 — Rejected timesheets unlock for editing, same as Draft.
         if (ts.status or "").lower() not in ("draft", "unsubmitted", "rejected", ""):
             flash("Cannot delete expenses from submitted timesheets.", "warning")
-            return redirect(url_for("associate.timesheets"))
+            return _expense_redirect_back(locals().get("ts"))
 
         ts.expense_total = max(0, (ts.expense_total or 0) - expense.amount)
         ts.grand_total = (ts.total_amount or 0) + ts.expense_total
@@ -5745,7 +5763,7 @@ def timesheets_delete_expense(expense_id):
         s.commit()
 
     flash("Expense removed.", "success")
-    return redirect(url_for("associate.timesheets"))
+    return _expense_redirect_back(locals().get("ts"))
 
 
 # =========================================================================
