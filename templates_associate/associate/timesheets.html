@@ -286,7 +286,13 @@
                 {# Phase 2 — category dropdown (TS 12 / TS 24). Mileage swaps
                    the £-amount input for a miles input + read-only £ display
                    (TS 25). VAT % derived from the category, not editable. #}
-                <div class="row g-2 align-items-end">
+                {# align-items-start so labels and inputs line up at the
+                   top regardless of any helper hints below (Receipt's
+                   "PDF / JPG / PNG, max 5 MB." and Mileage's "£X @
+                   £rate/mile" derivation would otherwise push their
+                   columns taller and shift the labels above the others
+                   with align-items-end). #}
+                <div class="row g-2 align-items-start">
                     <div class="col-md-3">
                         <label class="form-label" style="font-size:12px;">Category</label>
                         <select name="expense_category_id" id="expenseCategorySelect" class="form-select form-select-sm" required>
@@ -337,9 +343,14 @@
                         <small class="text-muted" id="expenseReceiptHint" style="font-size:11px;">PDF / JPG / PNG, max 5 MB.</small>
                     </div>
                     <div class="col-md-1">
+                        {# Invisible label keeps the button on the same
+                           horizontal line as the inputs above (which
+                           all carry a label). #}
+                        <label class="form-label" style="font-size:12px;">&nbsp;</label>
                         <button type="submit" class="btn btn-sm btn-primary w-100" id="expenseSubmitBtn"><i class="fas fa-plus"></i></button>
                     </div>
                     <div class="col-md-1">
+                        <label class="form-label" style="font-size:12px;">&nbsp;</label>
                         <button type="button" class="btn btn-sm btn-outline-secondary w-100" id="cancelEditExpense"
                                 style="display:none;" onclick="cancelEditExpense()">Cancel</button>
                     </div>
