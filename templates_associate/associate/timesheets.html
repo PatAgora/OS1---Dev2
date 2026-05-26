@@ -707,30 +707,50 @@ function cancelEditExpense() {
 
     // ---- Pre-submit checks (TS 9) --------------------------------------------
     function _collectEntries() {
-        // Returns { totalStdDays: float, weekendEntries: [], bhEntries: [] }.
+        // Returns { accountedDays, expectedWorkingDays, weekendEntries, bhEntries }.
+        //
         // The day rows (Standard / Holiday / Sickness) use <select>; only
         // Overtime uses <input>. Earlier this selector was input-only,
-        // which made totalStdDays always 0 and the <5-day warning fire on
-        // every submit even when the week was complete.
-        var totalStdDays = 0;
+        // which made the day-total always 0 and the <5-day warning fire
+        // on every submit even when the week was complete.
+        //
+        // For the "less than full week" warning we now compare time
+        // accounted for (Standard + Holiday + Sickness) against the
+        // expected working days for THIS week, which is 5 minus any UK
+        // bank holidays that fall Mon-Fri inside the displayed week.
+        // Weekend days never count toward the expected baseline.
+        var accountedDays = 0;
         var weekendEntries = [];
         var bhEntries = [];
+        var weekDatesISO = new Set();   // every Mon-Sun iso displayed in the grid
         document.querySelectorAll('input[name^="entry_"], select[name^="entry_"]').forEach(function(el) {
-            var val = parseFloat(el.value) || 0;
-            if (!val) return;
             var m = el.name.match(/^entry_(\d{4}-\d{2}-\d{2})_(.+)$/);
             if (!m) return;
             var iso = m[1];
+            weekDatesISO.add(iso);
+            var val = parseFloat(el.value) || 0;
             var timeType = (m[2] || '').replace(/__/g, ' ').toLowerCase();
-            if (timeType === 'standard time') totalStdDays += val;
-            if (_isWeekendDate(iso) && val > 0) {
-                weekendEntries.push(iso);
-            }
-            if (_isBankHoliday(iso) && val > 0) {
-                bhEntries.push(iso);
+            if (val > 0) {
+                if (timeType === 'standard time' || timeType === 'holiday' || timeType === 'sickness') {
+                    accountedDays += val;
+                }
+                if (_isWeekendDate(iso)) weekendEntries.push(iso);
+                if (_isBankHoliday(iso)) bhEntries.push(iso);
             }
         });
-        return { totalStdDays: totalStdDays, weekendEntries: weekendEntries, bhEntries: bhEntries };
+        // Count Mon-Fri bank holidays in the displayed week.
+        var bhWeekdayCount = 0;
+        weekDatesISO.forEach(function(iso) {
+            if (_isBankHoliday(iso) && !_isWeekendDate(iso)) bhWeekdayCount++;
+        });
+        var expectedWorkingDays = Math.max(0, 5 - bhWeekdayCount);
+        return {
+            accountedDays: accountedDays,
+            expectedWorkingDays: expectedWorkingDays,
+            bhWeekdayCount: bhWeekdayCount,
+            weekendEntries: weekendEntries,
+            bhEntries: bhEntries,
+        };
     }
 
     function _formatDate(iso) {
@@ -763,8 +783,22 @@ function cancelEditExpense() {
             ev.preventDefault();
             var info = _collectEntries();
             // Soft warnings — chained.
-            if (info.totalStdDays < 5) {
-                if (!window.confirm('You are currently submitting less than 5 days of Standard Time this week. Do you want to proceed?')) {
+            if (info.accountedDays < info.expectedWorkingDays) {
+                var msg;
+                if (info.bhWeekdayCount > 0) {
+                    msg = 'This week has ' + info.bhWeekdayCount +
+                          ' UK bank holiday' + (info.bhWeekdayCount === 1 ? '' : 's') +
+                          ' (' + info.expectedWorkingDays + ' expected working day' +
+                          (info.expectedWorkingDays === 1 ? '' : 's') + '). You have ' +
+                          info.accountedDays + ' day(s) of Standard / Holiday / Sickness ' +
+                          'time entered. Do you want to proceed?';
+                } else {
+                    msg = 'You are currently submitting less than ' +
+                          info.expectedWorkingDays + ' working days for this week (' +
+                          info.accountedDays + ' day(s) of Standard / Holiday / Sickness ' +
+                          'time entered). Do you want to proceed?';
+                }
+                if (!window.confirm(msg)) {
                     return;
                 }
             }
