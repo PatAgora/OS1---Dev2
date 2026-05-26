@@ -330,8 +330,11 @@
                         <input type="text" name="expense_description" class="form-control form-control-sm" placeholder="Brief description">
                     </div>
                     <div class="col-md-2" id="expenseReceiptWrapper">
-                        <label class="form-label" style="font-size:12px;">Receipt</label>
-                        <input type="file" name="expense_receipt" class="form-control form-control-sm" accept=".pdf,.jpg,.jpeg,.png">
+                        <label class="form-label" style="font-size:12px;">Receipt <span id="expenseReceiptReq" class="text-danger">*</span></label>
+                        <input type="file" name="expense_receipt" id="expenseReceipt"
+                               class="form-control form-control-sm"
+                               accept=".pdf,.jpg,.jpeg,.png" required>
+                        <small class="text-muted" id="expenseReceiptHint" style="font-size:11px;">PDF / JPG / PNG, max 5 MB.</small>
                     </div>
                     <div class="col-md-1">
                         <button type="submit" class="btn btn-sm btn-primary w-100" id="expenseSubmitBtn"><i class="fas fa-plus"></i></button>
@@ -352,6 +355,10 @@
                 var distIn = document.getElementById('expenseDistance');
                 var derived = document.getElementById('mileageDerivedAmount');
                 if (!sel) return;
+                var rcptW   = document.getElementById('expenseReceiptWrapper');
+                var rcptIn  = document.getElementById('expenseReceipt');
+                var rcptReq = document.getElementById('expenseReceiptReq');
+                var rcptHint = document.getElementById('expenseReceiptHint');
                 function refresh() {
                     var opt = sel.options[sel.selectedIndex];
                     var isMileage = opt && opt.dataset && opt.dataset.mileage === '1';
@@ -360,11 +367,21 @@
                         distW.style.display = '';
                         if (amtIn) { amtIn.required = false; amtIn.value = ''; }
                         if (distIn) distIn.required = true;
+                        // TS 28 — Mileage doesn't need a receipt (no third-party
+                        // bill to attach). Hide the input + drop the required flag.
+                        if (rcptIn) { rcptIn.required = false; rcptIn.value = ''; }
+                        if (rcptW)  rcptW.style.display = 'none';
                     } else {
                         amtW.style.display = '';
                         distW.style.display = 'none';
                         if (amtIn) amtIn.required = true;
                         if (distIn) { distIn.required = false; distIn.value = ''; }
+                        // Non-mileage: receipt MANDATORY (PDF/JPG/PNG, ≤5 MB
+                        // — same constraints the server enforces).
+                        if (rcptW)  rcptW.style.display = '';
+                        if (rcptIn) rcptIn.required = true;
+                        if (rcptReq) rcptReq.style.display = '';
+                        if (rcptHint) rcptHint.style.display = '';
                     }
                 }
                 sel.addEventListener('change', refresh);
@@ -668,9 +685,13 @@ function editExpense(btn) {
     if (sub) sub.innerHTML = '<i class="fas fa-check"></i>';
     var cancel = document.getElementById('cancelEditExpense');
     if (cancel) cancel.style.display = '';
-    // The receipt can't be swapped on edit \u2014 hide the field to avoid confusion.
+    // The receipt can't be swapped on edit \u2014 hide the field to avoid
+    // confusion and drop the required attribute (re-applied by the
+    // category-change refresh handler when the user cancels).
     var rcpt = document.getElementById('expenseReceiptWrapper');
     if (rcpt) rcpt.style.display = 'none';
+    var rcptIn = document.getElementById('expenseReceipt');
+    if (rcptIn) { rcptIn.required = false; rcptIn.value = ''; }
     form.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 

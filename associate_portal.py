@@ -5561,8 +5561,14 @@ def timesheets_add_expense():
         vat_amount = round(amount * (vat_pct / 100.0), 2)
 
         # Handle receipt upload — Phase 2 / TS 14 size + MIME checks.
+        # TS 28: receipt is MANDATORY for non-Mileage expenses. Mileage
+        # entries (HMRC rate × distance) don't have a third-party
+        # receipt so we skip the requirement there.
         receipt_doc_id = None
         receipt_file = request.files.get("expense_receipt")
+        if not is_mileage_cat and not (receipt_file and receipt_file.filename):
+            flash("A receipt is required for this expense category. Please attach a PDF, JPG or PNG (max 5 MB).", "danger")
+            return redirect(url_for("associate.timesheets"))
         if receipt_file and receipt_file.filename:
             ext = os.path.splitext(receipt_file.filename)[1].lower().lstrip(".")
             if ext not in {"pdf", "jpg", "jpeg", "png"}:
