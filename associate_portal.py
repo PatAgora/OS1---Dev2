@@ -3968,18 +3968,26 @@ def timesheets():
                 Timesheet.period_start.desc()
             ).all()
 
-        # Current editable timesheet. Draft / Unsubmitted are the obvious
-        # candidates; TS 5 also re-enables editing on Rejected so the
-        # Associate can amend the SAME row and re-submit instead of
-        # starting over. Iteration is period_start DESC so the most
-        # recent eligible row wins.
+        # Current editable timesheet. By default this is the most recent
+        # Draft / Unsubmitted row (period_start DESC iteration). For TS 5
+        # the Associate can opt-in to editing a Rejected row by clicking
+        # Edit / Re-submit on the row in the Previous Timesheets list —
+        # that navigates here with ?edit=<ts_id>. We honour that override
+        # only when the row exists, belongs to this Associate, and is
+        # currently Rejected.
+        edit_id = request.args.get("edit", type=int)
         current_ts = None
-        previous_sheets = []
-        for ts in all_sheets:
-            if not current_ts and getattr(ts, "status", "") in ("Draft", "Unsubmitted", "Rejected", None, ""):
-                current_ts = ts
-            else:
-                previous_sheets.append(ts)
+        if edit_id:
+            for ts in all_sheets:
+                if ts.id == edit_id and (getattr(ts, "status", "") or "").lower() == "rejected":
+                    current_ts = ts
+                    break
+        if not current_ts:
+            for ts in all_sheets:
+                if getattr(ts, "status", "") in ("Draft", "Unsubmitted", None, ""):
+                    current_ts = ts
+                    break
+        previous_sheets = [ts for ts in all_sheets if ts is not current_ts]
 
         # Load config, entries, and expenses for current timesheet
         config = None
