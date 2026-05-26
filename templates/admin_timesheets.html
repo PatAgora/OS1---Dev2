@@ -175,6 +175,7 @@
                             </th>
                             <th>Associate</th>
                             <th>Today's effective grant</th>
+                            <th>Allowance ends</th>
                             <th class="text-center" style="width:120px;">Allow Overtime</th>
                             <th class="text-center" style="width:120px;">Allow Expenses</th>
                         </tr>
@@ -189,6 +190,15 @@
                                 {% elif a.ot_active %}<span class="badge bg-success">OT only</span>
                                 {% elif a.expense_active %}<span class="badge bg-success">Expenses only</span>
                                 {% else %}<span class="text-muted">None — both off</span>{% endif %}
+                            </td>
+                            <td class="small">
+                                {% if a.allowance_end == 'Open-ended' %}
+                                    <span class="text-muted"><i class="fas fa-infinity me-1"></i>Open-ended</span>
+                                {% elif a.allowance_end %}
+                                    {{ a.allowance_end }}
+                                {% else %}
+                                    <span class="text-muted">—</span>
+                                {% endif %}
                             </td>
                             <td class="text-center"><input type="checkbox" name="ot_{{ a.user_id }}" class="form-check-input" value="1"></td>
                             <td class="text-center"><input type="checkbox" name="exp_{{ a.user_id }}" class="form-check-input" value="1"></td>

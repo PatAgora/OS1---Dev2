@@ -2046,11 +2046,35 @@ def admin_timesheets():
                 ).bindparams(eid=perm_engagement_id)).all()
                 for pr in placed_rows:
                     perms = _associate_ts_permissions(s, pr.cand_id, perm_engagement_id, _today_mon)
+                    # Find the latest end date across active grants
+                    # covering today. NULL effective_to means open-ended
+                    # — any such row trumps a dated one when reporting
+                    # "when does the allowance run out".
+                    end_rows = s.execute(text(
+                        "SELECT effective_to, overtime_enabled, expense_enabled "
+                        "FROM associate_ts_permissions "
+                        "WHERE user_id = :uid AND engagement_id = :eid "
+                        "  AND effective_from <= :today "
+                        "  AND (effective_to IS NULL OR effective_to >= :today)"
+                    ).bindparams(uid=pr.cand_id, eid=perm_engagement_id, today=_today_mon)).all()
+                    active_rows = [r for r in end_rows if r.overtime_enabled or r.expense_enabled]
+                    allowance_end_label = None
+                    if active_rows:
+                        if any(r.effective_to is None for r in active_rows):
+                            allowance_end_label = "Open-ended"
+                        else:
+                            max_end = max(r.effective_to for r in active_rows)
+                            allowance_end_label = (
+                                max_end.strftime("%d/%m/%Y")
+                                if hasattr(max_end, "strftime")
+                                else str(max_end)
+                            )
                     perm_associates.append({
                         "user_id": pr.cand_id,
                         "name": pr.cand_name or f"#{pr.cand_id}",
                         "ot_active": perms["overtime_enabled"],
                         "expense_active": perms["expense_enabled"],
+                        "allowance_end": allowance_end_label,
                     })
     timesheets = [
         {
