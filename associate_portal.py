@@ -3968,11 +3968,15 @@ def timesheets():
                 Timesheet.period_start.desc()
             ).all()
 
-        # Current draft timesheet
+        # Current editable timesheet. Draft / Unsubmitted are the obvious
+        # candidates; TS 5 also re-enables editing on Rejected so the
+        # Associate can amend the SAME row and re-submit instead of
+        # starting over. Iteration is period_start DESC so the most
+        # recent eligible row wins.
         current_ts = None
         previous_sheets = []
         for ts in all_sheets:
-            if not current_ts and getattr(ts, "status", "") in ("Draft", "Unsubmitted", None, ""):
+            if not current_ts and getattr(ts, "status", "") in ("Draft", "Unsubmitted", "Rejected", None, ""):
                 current_ts = ts
             else:
                 previous_sheets.append(ts)

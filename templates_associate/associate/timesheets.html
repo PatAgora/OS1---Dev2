@@ -9,7 +9,12 @@
 {% endblock %}
 
 {% block content %}
-{% set has_draft = current_ts and current_ts.status in ('Draft', 'Unsubmitted', None, '') %}
+{# TS 5 — "has_draft" is the gate for the editable grid. Includes
+   Rejected so the Associate can amend the same row and re-submit
+   without starting over. Same set used by the Save/Submit buttons
+   below and by the server-side save/submit guards. #}
+{% set _editable_statuses = ('Draft', 'Unsubmitted', 'Rejected', None, '') %}
+{% set has_draft = current_ts and current_ts.status in _editable_statuses %}
 
 <!-- New Timesheet — only show when no active draft -->
 {% if not has_draft %}
@@ -63,14 +68,29 @@
 </div>
 {% endif %}
 
-<!-- Current Timesheet: Weekly Grid — only shows for active drafts -->
+<!-- Current Timesheet: Weekly Grid — Draft / Unsubmitted / Rejected -->
 {% if has_draft %}
 <div class="portal-card mb-4">
     <div class="portal-card-header">
         <h2><i class="fas fa-calendar-week me-2"></i>Current Timesheet</h2>
-        <span class="badge badge-in-progress">Draft</span>
+        {% if current_ts.status == 'Rejected' %}
+        <span class="badge badge-failed">Rejected — please amend &amp; re-submit</span>
+        {% else %}
+        <span class="badge badge-in-progress">{{ current_ts.status or 'Draft' }}</span>
+        {% endif %}
     </div>
     <div class="portal-card-body" style="padding: 0;">
+        {% if current_ts.status == 'Rejected' and current_ts.rejection_reason %}
+        <div class="alert alert-warning mb-0" style="border-radius:0; border-left:0; border-right:0;">
+            <strong><i class="fas fa-comment-dots me-1"></i> Approver feedback:</strong>
+            {{ current_ts.rejection_reason }}
+        </div>
+        {% elif current_ts.status == 'Rejected' %}
+        <div class="alert alert-warning mb-0" style="border-radius:0; border-left:0; border-right:0;">
+            <strong><i class="fas fa-info-circle me-1"></i> This timesheet was rejected.</strong>
+            Edit it below and click Submit to send it back for approval.
+        </div>
+        {% endif %}
         <form method="POST" action="/portal/timesheets/save" id="timesheetForm">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="timesheet_id" value="{{ current_ts.id }}">
@@ -218,14 +238,16 @@
                 </div>
             </div>
 
-            <!-- Buttons: REQ-091 hidden after approval/submission -->
-            {% if current_ts and current_ts.status in ('Draft', 'Unsubmitted', None, '') %}
+            <!-- Buttons: editable on Draft / Unsubmitted / Rejected (TS 5);
+                 locked once Submitted or Approved. -->
+            {% if current_ts and current_ts.status in _editable_statuses %}
             <div style="padding: 16px 20px; border-top: 1px solid var(--color-gray-200); display: flex; gap: 12px; flex-wrap: wrap;">
                 <button type="submit" class="btn btn-outline-primary">
                     <i class="fas fa-save me-1"></i> Save Draft
                 </button>
                 <button type="submit" formaction="/portal/timesheets/submit" class="btn btn-primary">
-                    <i class="fas fa-paper-plane me-1"></i> Submit Timesheet
+                    <i class="fas fa-paper-plane me-1"></i>
+                    {% if current_ts.status == 'Rejected' %}Re-submit Timesheet{% else %}Submit Timesheet{% endif %}
                 </button>
                 <button type="submit" formaction="/portal/timesheets/cancel" class="btn btn-outline-danger ms-auto" onclick="return confirm('Cancel this timesheet?');">
                     <i class="fas fa-times me-1"></i> Cancel Timesheet
