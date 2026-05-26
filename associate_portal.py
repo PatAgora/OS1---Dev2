@@ -3964,9 +3964,17 @@ def timesheets():
         # Get all timesheets for this candidate
         all_sheets = []
         if Timesheet:
-            all_sheets = s.query(Timesheet).filter_by(user_id=cand_id).order_by(
-                Timesheet.period_start.desc()
-            ).all()
+            # Adjustment timesheets are admin-internal — created via
+            # /admin/timesheets > Adjust to issue a credit/debit on the
+            # next invoice. They must not appear in the Associate's
+            # Previous Timesheets list (or compete for the current_ts
+            # slot). Filter them out at source.
+            all_sheets = [
+                ts for ts in s.query(Timesheet).filter_by(user_id=cand_id).order_by(
+                    Timesheet.period_start.desc()
+                ).all()
+                if (getattr(ts, "timesheet_type", "Standard") or "Standard") != "Adjustment"
+            ]
 
         # Current editable timesheet. By default this is the most recent
         # Draft / Unsubmitted row (period_start DESC iteration). For TS 5
