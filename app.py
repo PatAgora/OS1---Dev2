@@ -5432,6 +5432,51 @@ def admin_clients_delete(client_id: int):
 
 # ---- Expense Categories ----
 
+@app.route("/admin/hmrc-mileage-rate", methods=["POST"])
+@login_required
+def admin_update_hmrc_mileage_rate():
+    """Update only the HMRC mileage rate in company_settings (used by
+    the Expenses Categories tile on /taxonomy/manage so the recruiter
+    doesn't have to open the full Company Settings page). Honours
+    ?next=taxonomy_manage."""
+    guard = _require_admin()
+    if guard:
+        return guard
+    nxt = (request.form.get("next") or "").strip()
+    redir = url_for("taxonomy_manage") if nxt == "taxonomy_manage" else url_for("admin_company_settings")
+    try:
+        new_rate = float(request.form.get("hmrc_mileage_rate") or "")
+    except ValueError:
+        flash("HMRC mileage rate must be a number (e.g. 0.45).", "warning")
+        return redirect(redir)
+    if new_rate < 0:
+        flash("HMRC mileage rate can't be negative.", "warning")
+        return redirect(redir)
+    try:
+        settings = _company_settings()
+        old_rate = settings.get("hmrc_mileage_rate")
+        settings["hmrc_mileage_rate"] = new_rate
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as c:
+            row = c.execute(text("SELECT id FROM company_settings ORDER BY id LIMIT 1")).first()
+            if row:
+                c.execute(text("UPDATE company_settings SET config = :cfg WHERE id = :id")
+                          .bindparams(cfg=json.dumps(settings), id=row[0]))
+            else:
+                c.execute(text("INSERT INTO company_settings (config) VALUES (:cfg)")
+                          .bindparams(cfg=json.dumps(settings)))
+        flash(f"HMRC mileage rate updated to £{new_rate:.2f}/mile.", "success")
+        try:
+            log_audit_event("update", "config",
+                            f"HMRC mileage rate changed: {old_rate} -> {new_rate}",
+                            "company_settings", 0,
+                            {"hmrc_mileage_rate_old": old_rate, "hmrc_mileage_rate_new": new_rate})
+        except Exception:
+            pass
+    except Exception as exc:
+        flash(f"Failed to save HMRC rate: {exc}", "danger")
+    return redirect(redir)
+
+
 @app.route("/admin/expense-categories", methods=["GET"])
 @login_required
 def admin_expense_categories():
@@ -5443,6 +5488,29 @@ def admin_expense_categories():
     return render_template("admin_expense_categories.html", categories=cats)
 
 
+def _resolve_vat_treatment_from_form() -> str:
+    """Accepts either the legacy direct vat_treatment field OR the
+    simpler taxonomy_manage UI (vat_claimable checkbox + vat_rate_pct
+    dropdown). Returns one of: standard / reduced / zero / non_vatable."""
+    direct = (request.form.get("vat_treatment") or "").strip().lower()
+    if direct in ("standard", "reduced", "zero", "non_vatable"):
+        return direct
+    vat_claimable = request.form.get("vat_claimable") in ("on", "1", "true")
+    if not vat_claimable:
+        return "non_vatable"
+    rate = (request.form.get("vat_rate_pct") or "20").strip()
+    return {"20": "standard", "5": "reduced", "0": "zero"}.get(rate, "standard")
+
+
+def _expense_cat_redirect_target() -> str:
+    """Honour ?next=taxonomy_manage on the form so the taxonomy tile
+    can keep the admin on /taxonomy/manage after a save."""
+    nxt = (request.form.get("next") or "").strip()
+    if nxt == "taxonomy_manage":
+        return url_for("taxonomy_manage")
+    return url_for("admin_expense_categories")
+
+
 @app.route("/admin/expense-categories/new", methods=["POST"])
 @login_required
 def admin_expense_categories_new():
@@ -5450,22 +5518,23 @@ def admin_expense_categories_new():
     if guard:
         return guard
     name = (request.form.get("name") or "").strip()
-    vat = (request.form.get("vat_treatment") or "standard").strip().lower()
+    vat = _resolve_vat_treatment_from_form()
     is_mileage = request.form.get("is_mileage") in ("on", "1", "true")
     try:
         sort_order = int(request.form.get("sort_order") or 99)
     except ValueError:
         sort_order = 99
+    redir = _expense_cat_redirect_target()
     if not name:
         flash("Category name is required.", "warning")
-        return redirect(url_for("admin_expense_categories"))
+        return redirect(redir)
     if vat not in ("standard", "reduced", "zero", "non_vatable"):
         flash("VAT treatment must be standard / reduced / zero / non_vatable.", "warning")
-        return redirect(url_for("admin_expense_categories"))
+        return redirect(redir)
     with Session(engine) as s:
         if s.scalar(select(ExpenseCategory).where(ExpenseCategory.name == name)):
             flash(f"Category {name!r} already exists.", "warning")
-            return redirect(url_for("admin_expense_categories"))
+            return redirect(redir)
         cat = ExpenseCategory(name=name, vat_treatment=vat, is_mileage=is_mileage, sort_order=sort_order)
         s.add(cat)
         s.commit()
@@ -5475,7 +5544,7 @@ def admin_expense_categories_new():
         except Exception:
             pass
     flash(f"Expense category {name} created.", "success")
-    return redirect(url_for("admin_expense_categories"))
+    return redirect(redir)
 
 
 @app.route("/admin/expense-categories/<int:cat_id>/edit", methods=["POST"])
@@ -5484,13 +5553,20 @@ def admin_expense_categories_edit(cat_id: int):
     guard = _require_admin()
     if guard:
         return guard
+    redir = _expense_cat_redirect_target()
     with Session(engine) as s:
         cat = s.get(ExpenseCategory, cat_id)
         if not cat:
             abort(404)
         old = {"name": cat.name, "vat": cat.vat_treatment, "mileage": cat.is_mileage, "sort": cat.sort_order}
         name = (request.form.get("name") or "").strip() or cat.name
-        vat = (request.form.get("vat_treatment") or cat.vat_treatment).strip().lower()
+        # _resolve_vat_treatment_from_form falls back to the existing
+        # vat_treatment when the new fields aren't present (e.g. when
+        # called from the legacy /admin/expense-categories page that
+        # POSTs vat_treatment directly).
+        vat = _resolve_vat_treatment_from_form() if (
+            request.form.get("vat_treatment") or request.form.get("vat_claimable") is not None
+        ) else cat.vat_treatment
         is_mileage = request.form.get("is_mileage") in ("on", "1", "true")
         try:
             sort_order = int(request.form.get("sort_order") or cat.sort_order)
@@ -5498,12 +5574,12 @@ def admin_expense_categories_edit(cat_id: int):
             sort_order = cat.sort_order
         if vat not in ("standard", "reduced", "zero", "non_vatable"):
             flash("VAT treatment must be standard / reduced / zero / non_vatable.", "warning")
-            return redirect(url_for("admin_expense_categories"))
+            return redirect(redir)
         # Uniqueness check excluding the row we're editing.
         clash = s.scalar(select(ExpenseCategory).where(ExpenseCategory.name == name, ExpenseCategory.id != cat_id))
         if clash:
             flash(f"Another category already uses the name {name!r}.", "warning")
-            return redirect(url_for("admin_expense_categories"))
+            return redirect(redir)
         cat.name = name
         cat.vat_treatment = vat
         cat.is_mileage = is_mileage
@@ -5516,7 +5592,7 @@ def admin_expense_categories_edit(cat_id: int):
         except Exception:
             pass
     flash(f"Expense category {name} updated.", "success")
-    return redirect(url_for("admin_expense_categories"))
+    return redirect(redir)
 
 
 @app.route("/admin/expense-categories/<int:cat_id>/delete", methods=["POST"])
@@ -5525,14 +5601,11 @@ def admin_expense_categories_delete(cat_id: int):
     guard = _require_admin()
     if guard:
         return guard
+    redir = _expense_cat_redirect_target()
     with Session(engine) as s:
         cat = s.get(ExpenseCategory, cat_id)
         if not cat:
             abort(404)
-        # Refuse if any TimesheetExpense rows reference this category. The
-        # expense_category_id FK column is added in Phase 2, so until then
-        # this check is a no-op (the SELECT returns 0 because the column
-        # doesn't exist or no rows reference it yet).
         try:
             ref_count = s.execute(text(
                 "SELECT COUNT(*) FROM timesheet_expenses WHERE expense_category_id = :id"
@@ -5542,7 +5615,7 @@ def admin_expense_categories_delete(cat_id: int):
         if ref_count > 0:
             flash(f"Cannot delete {cat.name}: {ref_count} expense line(s) still reference it. "
                   f"Re-categorise those expenses first.", "warning")
-            return redirect(url_for("admin_expense_categories"))
+            return redirect(redir)
         name = cat.name
         s.delete(cat)
         s.commit()
@@ -5552,7 +5625,7 @@ def admin_expense_categories_delete(cat_id: int):
         except Exception:
             pass
     flash(f"Expense category {name} deleted.", "success")
-    return redirect(url_for("admin_expense_categories"))
+    return redirect(redir)
 
 
 # ---- Company Settings ----
@@ -29752,6 +29825,25 @@ def taxonomy_manage():
     except Exception:
         pass
 
+    # Expense categories + HMRC mileage rate (TimesheetReq 24/25) so the
+    # Expenses Categories tile on /taxonomy/manage is fully self-served.
+    expense_categories_list = []
+    try:
+        with Session(engine) as s_ec:
+            expense_categories_list = [
+                {"id": c.id, "name": c.name, "vat_treatment": c.vat_treatment,
+                 "is_mileage": bool(c.is_mileage), "sort_order": c.sort_order}
+                for c in s_ec.scalars(
+                    select(ExpenseCategory).order_by(ExpenseCategory.sort_order, ExpenseCategory.name)
+                ).all()
+            ]
+    except Exception:
+        pass
+    try:
+        hmrc_mileage_rate = float(_company_settings().get("hmrc_mileage_rate", 0.45))
+    except Exception:
+        hmrc_mileage_rate = 0.45
+
     # Leave reasons for config page
     leave_reasons_list = []
     try:
@@ -29999,7 +30091,9 @@ Optimus - Financial Services Resourcing Specialists"""
                            offer_templates=offer_templates,
                            leave_reasons=leave_reasons_list,
                            vetting_profiles=vetting_profiles,
-                           vetting_expiry_config=vetting_expiry_config)
+                           vetting_expiry_config=vetting_expiry_config,
+                           expense_categories=expense_categories_list,
+                           hmrc_mileage_rate=hmrc_mileage_rate)
 
 @app.route("/taxonomy/category/add", methods=["POST"])
 @login_required

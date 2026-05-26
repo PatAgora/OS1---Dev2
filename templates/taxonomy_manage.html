@@ -1376,6 +1376,162 @@ Following your offer of engagement with Optimus, the next step is to complete ou
   </div>
 </div>
 
+<!-- ==================================================================== -->
+<!-- Expenses Categories + HMRC Mileage Rate (TimesheetReq 24 / 25)        -->
+<!-- ==================================================================== -->
+<div class="card shadow-sm mb-4" id="expense-categories">
+  <div class="card-header bg-white py-3 collapsible-header" style="cursor: pointer;" onclick="toggleCollapse('expense-categories-body', this)">
+    <div class="d-flex justify-content-between align-items-center">
+      <h5 class="fw-bold mb-0"><i class="fas fa-receipt me-2 text-primary"></i>Expenses Categories</h5>
+      <i class="fas fa-chevron-down collapse-icon text-muted"></i>
+    </div>
+    <p class="text-muted mb-0 mt-1" style="font-size: 0.85rem;">
+      Configure the categories Associates pick from when adding expense lines, and their VAT treatment (Standard 20% / Reduced 5% / Zero 0% / Non-VATable). Default for new categories is Standard 20%. Mileage is non-VATable and uses the HMRC rate.
+    </p>
+  </div>
+  <div class="card-body collapsible-body" id="expense-categories-body" style="display: none;">
+
+    {# HMRC mileage rate — central config, used by every Mileage-flagged category #}
+    <div class="mb-4 p-3" style="background:#f8fafc;border-radius:8px;border:1px solid #e5e7eb;">
+      <h6 class="mb-2"><i class="fas fa-road me-1 text-primary"></i>HMRC Mileage Rate</h6>
+      <p class="text-muted small mb-2">Mileage-flagged categories compute reimbursable amount as distance &times; this rate. Adjust here when HMRC publishes a new rate.</p>
+      <form method="POST" action="{{ url_for('admin_update_hmrc_mileage_rate') }}" class="row g-2 align-items-end">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="next" value="taxonomy_manage">
+        <div class="col-md-3">
+          <label class="form-label small fw-semibold">Rate (£ per mile)</label>
+          <input type="number" name="hmrc_mileage_rate" class="form-control form-control-sm"
+                 step="0.001" min="0" value="{{ '%.3f'|format(hmrc_mileage_rate) }}" required>
+        </div>
+        <div class="col-md-3">
+          <button type="submit" class="btn btn-primary btn-sm"><i class="fas fa-save me-1"></i> Save rate</button>
+        </div>
+      </form>
+    </div>
+
+    {# Add category form #}
+    <h6 class="mb-2"><i class="fas fa-plus-circle me-1 text-primary"></i>Add Category</h6>
+    <form method="POST" action="{{ url_for('admin_expense_categories_new') }}" class="row g-2 align-items-end mb-3">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="next" value="taxonomy_manage">
+      <div class="col-md-3">
+        <label class="form-label small fw-semibold">Category Name</label>
+        <input type="text" name="name" class="form-control form-control-sm" placeholder="e.g. Travel" required>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small fw-semibold">VAT Claimable</label>
+        <div class="form-check pt-1">
+          <input type="checkbox" name="vat_claimable" id="newCatVatClaimable" class="form-check-input" value="1" checked>
+          <label class="form-check-label small" for="newCatVatClaimable">Tick = yes</label>
+        </div>
+      </div>
+      <div class="col-md-2" id="newCatVatRateWrap">
+        <label class="form-label small fw-semibold">VAT Amount</label>
+        <select name="vat_rate_pct" class="form-select form-select-sm">
+          <option value="20" selected>20% (Standard)</option>
+          <option value="5">5% (Reduced)</option>
+          <option value="0">0% (Zero Rate)</option>
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small fw-semibold">Mileage</label>
+        <div class="form-check pt-1">
+          <input type="checkbox" name="is_mileage" id="newCatIsMileage" class="form-check-input" value="1">
+          <label class="form-check-label small" for="newCatIsMileage">Uses HMRC rate</label>
+        </div>
+      </div>
+      <div class="col-md-2">
+        <button type="submit" class="btn btn-primary btn-sm w-100"><i class="fas fa-plus me-1"></i> Add</button>
+      </div>
+    </form>
+
+    {# Existing categories — one <form> per row defined outside the
+       table, then row inputs reference it via the form="..." attribute
+       (HTML5-valid, lets <tr> contain interactive elements without
+       wrapping the row in a form). Each row also has a delete form. #}
+    {% if expense_categories %}
+    {% for c in expense_categories %}
+    <form method="POST" action="{{ url_for('admin_expense_categories_edit', cat_id=c.id) }}" id="edit_cat_{{ c.id }}" style="display:none;">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="next" value="taxonomy_manage">
+    </form>
+    <form method="POST" action="{{ url_for('admin_expense_categories_delete', cat_id=c.id) }}" id="delete_cat_{{ c.id }}" style="display:none;"
+          onsubmit="return confirm('Delete category {{ c.name }}? You can\'t delete a category that\'s referenced by existing expense lines.');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="next" value="taxonomy_manage">
+    </form>
+    {% endfor %}
+    <table class="table table-sm align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>Name</th>
+          <th>VAT Claimable</th>
+          <th>VAT Amount</th>
+          <th>Mileage</th>
+          <th class="text-end">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in expense_categories %}
+        {% set vat_claimable = c.vat_treatment != 'non_vatable' %}
+        <tr>
+          <td>
+            <input type="text" name="name" form="edit_cat_{{ c.id }}" class="form-control form-control-sm" value="{{ c.name }}" required>
+          </td>
+          <td>
+            <input type="checkbox" name="vat_claimable" form="edit_cat_{{ c.id }}" class="form-check-input row-vat-cb" data-target="edit_cat_{{ c.id }}" value="1" {% if vat_claimable %}checked{% endif %}>
+          </td>
+          <td>
+            <select name="vat_rate_pct" form="edit_cat_{{ c.id }}" class="form-select form-select-sm row-vat-rate" style="max-width:180px;" {% if not vat_claimable %}disabled{% endif %}>
+              <option value="20" {% if c.vat_treatment == 'standard' %}selected{% endif %}>20% (Standard)</option>
+              <option value="5"  {% if c.vat_treatment == 'reduced' %}selected{% endif %}>5% (Reduced)</option>
+              <option value="0"  {% if c.vat_treatment == 'zero' %}selected{% endif %}>0% (Zero Rate)</option>
+            </select>
+          </td>
+          <td>
+            <input type="checkbox" name="is_mileage" form="edit_cat_{{ c.id }}" class="form-check-input" value="1" {% if c.is_mileage %}checked{% endif %}>
+          </td>
+          <td class="text-end" style="white-space:nowrap;">
+            <button type="submit" form="edit_cat_{{ c.id }}" class="btn btn-sm btn-outline-primary" title="Save changes"><i class="fas fa-save"></i></button>
+            <button type="submit" form="delete_cat_{{ c.id }}" class="btn btn-sm btn-outline-danger" title="Delete category"><i class="fas fa-trash"></i></button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="text-muted text-center py-2">No expense categories configured yet.</p>
+    {% endif %}
+
+    <script>
+    (function () {
+      // Toggle the VAT rate dropdown enabled-state from the VAT Claimable checkbox.
+      function syncVatRate(checkbox, rateSelect) {
+        if (!checkbox || !rateSelect) return;
+        rateSelect.disabled = !checkbox.checked;
+      }
+      // Add form
+      var addCb = document.getElementById('newCatVatClaimable');
+      var addSel = document.querySelector('#newCatVatRateWrap select');
+      if (addCb && addSel) {
+        addCb.addEventListener('change', function () { syncVatRate(addCb, addSel); });
+        syncVatRate(addCb, addSel);
+      }
+      // Edit rows — checkbox and select share a row, so look up sel
+      // by closest <tr> instead of by form (which lives outside the
+      // table for HTML5-valid form="..." association).
+      document.querySelectorAll('#expense-categories-body .row-vat-cb').forEach(function (cb) {
+        var row = cb.closest('tr');
+        var sel = row && row.querySelector('.row-vat-rate');
+        if (cb && sel) {
+          cb.addEventListener('change', function () { syncVatRate(cb, sel); });
+        }
+      });
+    })();
+    </script>
+  </div>
+</div>
+
 <!-- Leave Reasons Configuration -->
 <div class="card shadow-sm mb-4" id="leave-reasons">
   <div class="card-header bg-white py-3 collapsible-header" style="cursor: pointer;" onclick="toggleCollapse('leave-reasons-body', this)">
