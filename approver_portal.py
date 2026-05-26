@@ -226,31 +226,86 @@ def onboard(token):
 @approver_bp.route("/dashboard", methods=["GET"])
 @_require_approver_login
 def dashboard():
-    """TS 11 — timesheets allocated to this approver, filterable by status."""
+    """TS 11 / TS 18 — timesheets allocated to this approver, filterable
+    by status / WC / client / project / associate. Filter dropdowns are
+    populated from the approver's full allocated set; the JS on the page
+    narrows them adaptively when other filters are picked."""
     app = _app()
     uid = session[SESSION_KEY]
     status_filter = (request.args.get("status") or "submitted").strip().lower() or None
     if status_filter == "all":
         status_filter = None
-    timesheets = app._approver_timesheet_query(uid, status_filter=status_filter)
-    clients = sorted({r["client_name"] for r in timesheets if r["client_name"]})
-    projects = sorted({r["engagement_name"] for r in timesheets if r["engagement_name"]})
-    associates = sorted({r["associate_name"] for r in timesheets if r["associate_name"]})
-    # Headline tile counts — across ALL of this approver's timesheets,
-    # independent of the current status filter.
-    _all = app._approver_timesheet_query(uid, status_filter=None)
+    wc_filter = (request.args.get("wc") or "").strip()
+    client_filter = (request.args.get("client") or "").strip()
+    project_filter = (request.args.get("project") or "").strip()
+    associate_filter = (request.args.get("associate") or "").strip()
+
+    # Pull the full approver-scoped set once. Headline tile counts come
+    # off this set so the tiles always show the true totals regardless
+    # of the current view filters. The dropdown option lists also come
+    # off the full set so a Client / Project / Associate the approver
+    # actually has access to doesn't disappear just because the table
+    # is currently filtered to "submitted" only.
+    full = app._approver_timesheet_query(uid, status_filter=None)
     counts = {
-        "outstanding": sum(1 for r in _all if (r["status"] or "").lower() == "submitted"),
-        "approved": sum(1 for r in _all if (r["status"] or "").lower() == "approved"),
-        "rejected": sum(1 for r in _all if (r["status"] or "").lower() == "rejected"),
+        "outstanding": sum(1 for r in full if (r["status"] or "").lower() == "submitted"),
+        "approved":    sum(1 for r in full if (r["status"] or "").lower() == "approved"),
+        "rejected":    sum(1 for r in full if (r["status"] or "").lower() == "rejected"),
     }
+
+    # Apply filters server-side to derive the rows displayed in the
+    # table. Same logic the JS uses to re-populate the dropdowns when
+    # the user changes a single filter without resubmitting.
+    def _match(r):
+        if status_filter and (r["status"] or "").lower() != status_filter:
+            return False
+        if wc_filter:
+            ps = r["period_start"]
+            ps_iso = ps.isoformat() if hasattr(ps, "isoformat") else str(ps or "")
+            if ps_iso != wc_filter:
+                return False
+        if client_filter and (r["client_name"] or "") != client_filter:
+            return False
+        if project_filter and (r["engagement_name"] or "") != project_filter:
+            return False
+        if associate_filter and (r["associate_name"] or "") != associate_filter:
+            return False
+        return True
+    timesheets = [r for r in full if _match(r)]
+
+    # Build a JSON-friendly dataset for the client-side adaptive filters.
+    # Lean shape: only the fields the dropdown logic needs.
+    full_for_js = [
+        {
+            "wc": (r["period_start"].isoformat() if hasattr(r["period_start"], "isoformat") else str(r["period_start"] or "")),
+            "client": r["client_name"] or "",
+            "project": r["engagement_name"] or "",
+            "associate": r["associate_name"] or "",
+            "status": (r["status"] or "").lower(),
+        }
+        for r in full
+    ]
+
+    # Distinct option lists from the full set (not the filtered one) so
+    # the dropdowns can offer any value the approver is allowed to see.
+    wc_options = sorted({d["wc"] for d in full_for_js if d["wc"]}, reverse=True)
+    clients = sorted({d["client"] for d in full_for_js if d["client"]})
+    projects = sorted({d["project"] for d in full_for_js if d["project"]})
+    associates = sorted({d["associate"] for d in full_for_js if d["associate"]})
+
     return render_template(
         "approver/dashboard.html",
         timesheets=timesheets,
+        wc_options=wc_options,
         clients=clients,
         projects=projects,
         associates=associates,
+        full_for_js=full_for_js,
         status_filter=status_filter or "all",
+        wc_filter=wc_filter,
+        client_filter=client_filter,
+        project_filter=project_filter,
+        associate_filter=associate_filter,
         counts=counts,
     )
 

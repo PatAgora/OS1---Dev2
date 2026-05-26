@@ -52,20 +52,125 @@
     </div>
 </div>
 
-<form method="GET" class="row g-2 mb-3 align-items-end">
-    <div class="col-md-3">
+{# TS 18 — adaptive filters. Each dropdown narrows the others to values
+   that actually exist for the current selection. Pure client-side JS
+   off the FULL approver-scoped dataset (full_for_js). Apply re-issues
+   the GET so the server re-derives the table; pure visual filtering
+   could drift from the underlying status filter (e.g. mark-as-paid).
+#}
+<form method="GET" class="row g-2 mb-3 align-items-end" id="approverFilters">
+    <div class="col-md-2">
+        <label class="form-label small">Week Commencing</label>
+        <select name="wc" class="form-select form-select-sm" data-filter="wc">
+            <option value="">All</option>
+            {% for d in wc_options %}<option value="{{ d }}" {% if d == wc_filter %}selected{% endif %}>{{ d }}</option>{% endfor %}
+        </select>
+    </div>
+    <div class="col-md-2">
+        <label class="form-label small">Client</label>
+        <select name="client" class="form-select form-select-sm" data-filter="client">
+            <option value="">All</option>
+            {% for c in clients %}<option value="{{ c }}" {% if c == client_filter %}selected{% endif %}>{{ c }}</option>{% endfor %}
+        </select>
+    </div>
+    <div class="col-md-2">
+        <label class="form-label small">Project</label>
+        <select name="project" class="form-select form-select-sm" data-filter="project">
+            <option value="">All</option>
+            {% for p in projects %}<option value="{{ p }}" {% if p == project_filter %}selected{% endif %}>{{ p }}</option>{% endfor %}
+        </select>
+    </div>
+    <div class="col-md-2">
+        <label class="form-label small">Associate</label>
+        <select name="associate" class="form-select form-select-sm" data-filter="associate">
+            <option value="">All</option>
+            {% for a in associates %}<option value="{{ a }}" {% if a == associate_filter %}selected{% endif %}>{{ a }}</option>{% endfor %}
+        </select>
+    </div>
+    <div class="col-md-2">
         <label class="form-label small">Status</label>
         <select name="status" class="form-select form-select-sm">
-            <option value="submitted" {% if status_filter == 'submitted' %}selected{% endif %}>Submitted (awaiting your approval)</option>
+            <option value="submitted" {% if status_filter == 'submitted' %}selected{% endif %}>Submitted</option>
             <option value="approved" {% if status_filter == 'approved' %}selected{% endif %}>Approved</option>
             <option value="rejected" {% if status_filter == 'rejected' %}selected{% endif %}>Rejected</option>
             <option value="all" {% if status_filter == 'all' %}selected{% endif %}>All</option>
         </select>
     </div>
-    <div class="col-md-2">
-        <button class="btn btn-sm btn-primary w-100"><i class="fas fa-filter me-1"></i>Apply</button>
+    <div class="col-md-2 d-flex gap-2">
+        <button type="submit" class="btn btn-sm btn-primary flex-grow-1"><i class="fas fa-filter me-1"></i>Apply</button>
+        <a href="{{ url_for('approver.dashboard') }}" class="btn btn-sm btn-outline-secondary" title="Clear all filters"><i class="fas fa-times"></i></a>
     </div>
 </form>
+
+<script id="approverDataset" type="application/json">{{ full_for_js|tojson }}</script>
+<script>
+(function(){
+    var dataset = [];
+    try { dataset = JSON.parse(document.getElementById('approverDataset').textContent || '[]'); }
+    catch (e) { dataset = []; }
+    var form = document.getElementById('approverFilters');
+    if (!form) return;
+    var keys = ['wc', 'client', 'project', 'associate'];
+
+    function currentSelections() {
+        var out = {};
+        keys.forEach(function(k) {
+            var el = form.querySelector('[data-filter="' + k + '"]');
+            out[k] = el ? el.value : '';
+        });
+        return out;
+    }
+    // Re-populate one dropdown using all OTHER selections as the filter.
+    function refreshDropdown(target) {
+        var el = form.querySelector('[data-filter="' + target + '"]');
+        if (!el) return;
+        var sel = currentSelections();
+        var current = el.value;
+        var matching = dataset.filter(function(r) {
+            for (var i = 0; i < keys.length; i++) {
+                var k = keys[i];
+                if (k === target) continue;
+                if (sel[k] && r[k] !== sel[k]) return false;
+            }
+            return true;
+        });
+        var distinct = Array.from(new Set(matching.map(function(r) { return r[target]; }).filter(Boolean)));
+        // For WC, keep descending sort (newest first); others alphabetical.
+        if (target === 'wc') distinct.sort().reverse();
+        else distinct.sort();
+
+        // Re-render the dropdown options. Preserve the current selection
+        // if it's still valid; otherwise reset to "All" and the server
+        // will re-derive the table on submit.
+        var html = '<option value="">All</option>';
+        var stillValid = false;
+        distinct.forEach(function(v) {
+            var selected = (v === current) ? ' selected' : '';
+            if (v === current) stillValid = true;
+            html += '<option value="' + String(v).replace(/"/g, '&quot;') + '"' + selected + '>' + String(v) + '</option>';
+        });
+        el.innerHTML = html;
+        if (!stillValid) el.value = '';
+    }
+    function refreshAllExcept(except) {
+        keys.forEach(function(k) {
+            if (k !== except) refreshDropdown(k);
+        });
+    }
+    keys.forEach(function(k) {
+        var el = form.querySelector('[data-filter="' + k + '"]');
+        if (!el) return;
+        el.addEventListener('change', function() {
+            refreshAllExcept(k);
+            // Auto-submit so the table updates without an extra click.
+            form.submit();
+        });
+    });
+    // On first paint, narrow any pre-selected combinations (e.g. user
+    // hit /dashboard?client=Acme directly and Associate should reflect it).
+    refreshAllExcept(null);
+})();
+</script>
 
 <div class="card">
     <div class="card-header"><strong>Timesheets ({{ timesheets|length }})</strong></div>

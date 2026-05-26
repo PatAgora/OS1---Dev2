@@ -1830,9 +1830,12 @@ def _approver_timesheet_query(user_id, status_filter=None):
         cand_ids = list({r.associate_id for r in rows if r.associate_id})
         names = {}
         if cand_ids:
+            cand_tuple = tuple(cand_ids)
+            if len(cand_tuple) == 1:
+                cand_tuple = (cand_tuple[0], cand_tuple[0])
             for cid, nm in s.execute(text(
                 "SELECT id, name FROM candidates WHERE id IN :ids"
-            ).bindparams(ids=tuple(cand_ids))).all():
+            ).bindparams(ids=cand_tuple)).all():
                 names[cid] = nm
         out = []
         for r in rows:
