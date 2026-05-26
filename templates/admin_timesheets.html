@@ -5,14 +5,98 @@
 {% block content %}
 <div class="container-fluid px-4 pt-3 pb-4">
 
-<div class="page-header mb-4">
+<div class="page-header mb-4 d-flex justify-content-between align-items-center">
     <div>
         <h1 style="color:#fff;"><i class="fas fa-clock me-2"></i>Timesheets</h1>
         <p style="color:rgba(255,255,255,0.8);" class="mb-0">
             Every submitted, approved, declined, or draft timesheet across every placement. Filter, approve, decline, amend, or re-open.
         </p>
     </div>
+    <button type="button" class="btn btn-light"
+            data-bs-toggle="modal" data-bs-target="#createForAssociateModal"
+            title="Create a Draft timesheet for an Associate (TS 20 — bypasses the Associate-side WC window)">
+        <i class="fas fa-plus me-1"></i> Create for Associate
+    </button>
 </div>
+
+{# ----- TS 20: Create timesheet on behalf modal -----
+   Bypasses the Associate-Portal WC window. Engagement dropdown
+   filters down once an Associate is picked (only engagements the
+   Associate is actually placed on). Submitting lands on the
+   Edit-on-behalf grid for the new Draft. #}
+<div class="modal fade" id="createForAssociateModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="POST" action="{{ url_for('admin_ts_create_for_associate') }}">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="fas fa-user-plus me-2"></i>Create timesheet for Associate</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <p class="text-muted small mb-3">Creates a Draft timesheet on the chosen engagement and week, then opens the Edit on behalf grid so you can fill it in and (optionally) Save &amp; Submit on the Associate's behalf. The WC window restriction that limits Associates to ±2 weeks is bypassed.</p>
+          <div class="mb-3">
+            <label class="form-label">Associate</label>
+            <select name="user_id" id="cfaAssociate" class="form-select" required>
+              <option value="">— select an Associate —</option>
+              {% for c in create_candidates %}
+              <option value="{{ c.id }}">{{ c.name }}{% if c.email %} — {{ c.email }}{% endif %}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Engagement</label>
+            <select name="engagement_id" id="cfaEngagement" class="form-select" required>
+              <option value="">— select an Engagement —</option>
+              {% for e in perm_engagements %}
+              <option value="{{ e.id }}" data-eng-id="{{ e.id }}">{{ e.client or '(no client)' }} — {{ e.name or '(unnamed)' }}</option>
+              {% endfor %}
+            </select>
+            <div class="form-text">The dropdown narrows to the engagements that Associate is placed on once you pick one.</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Week Commencing</label>
+            <input type="date" name="week_start" id="cfaWeekStart" class="form-control" required>
+            <div class="form-text">Any date — non-Monday dates are aligned to that week's Monday server-side. No window restriction.</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i class="fas fa-plus me-1"></i> Create &amp; open editor</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+<script id="cfaEngMap" type="application/json">{{ assoc_engagement_map|tojson }}</script>
+<script>
+(function () {
+    var map = {};
+    try { map = JSON.parse(document.getElementById('cfaEngMap').textContent || '{}'); } catch (e) { map = {}; }
+    var assocSel = document.getElementById('cfaAssociate');
+    var engSel   = document.getElementById('cfaEngagement');
+    if (!assocSel || !engSel) return;
+    var allOptions = Array.from(engSel.options).map(function(o) {
+        return {value: o.value, text: o.text, label: o.label || o.text};
+    });
+    function refreshEngagements() {
+        var uid = assocSel.value;
+        var allowed = uid ? new Set((map[uid] || []).map(String)) : null;
+        engSel.innerHTML = '';
+        allOptions.forEach(function(o) {
+            if (!o.value) {
+                engSel.appendChild(new Option(o.text, ''));
+                return;
+            }
+            if (!allowed || allowed.has(String(o.value))) {
+                engSel.appendChild(new Option(o.text, o.value));
+            }
+        });
+        engSel.value = '';
+    }
+    assocSel.addEventListener('change', refreshEngagements);
+})();
+</script>
 
 {# ----- Org-wide dashboard tiles + per-engagement breakdown -----
    "Not submitted" counts Drafts whose WC is on/before

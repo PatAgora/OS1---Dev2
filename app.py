@@ -1993,6 +1993,29 @@ def admin_timesheets():
             }
             for r in bd_rows
         ]
+        # ----- TS 20: Create-for-Associate picker -----
+        # All Candidates with at least one Placed-style Application,
+        # plus all engagements they're attached to via Job rows. A
+        # small JSON map (assoc_engagement_map) lets the modal narrow
+        # the Engagement dropdown once an Associate is picked.
+        create_candidates = [
+            {"id": r.id, "name": r.name or f"#{r.id}", "email": r.email or ""}
+            for r in s.execute(text(
+                "SELECT DISTINCT c.id, c.name, c.email FROM candidates c "
+                "JOIN applications a ON a.candidate_id = c.id "
+                "WHERE a.status IN ('Placed','Contract Signed','On Assignment','Active','Contracted','Hired') "
+                "ORDER BY c.name"
+            )).all()
+        ]
+        create_eng_pairs = s.execute(text(
+            "SELECT DISTINCT a.candidate_id AS cand_id, j.engagement_id AS eng_id "
+            "FROM applications a JOIN jobs j ON j.id = a.job_id "
+            "WHERE a.status IN ('Placed','Contract Signed','On Assignment','Active','Contracted','Hired')"
+        )).all()
+        assoc_engagement_map = {}
+        for pair in create_eng_pairs:
+            assoc_engagement_map.setdefault(pair.cand_id, []).append(pair.eng_id)
+
         # ----- OT/Expenses permissions card -----
         # All engagements for the picker.
         perm_engagements = [
@@ -2113,6 +2136,8 @@ def admin_timesheets():
         perm_engagement=perm_engagement,
         perm_associates=perm_associates,
         perm_presets=perm_presets,
+        create_candidates=create_candidates,
+        assoc_engagement_map=assoc_engagement_map,
     )
 
 
@@ -2260,6 +2285,125 @@ def admin_ts_reject(ts_id):
         s.commit()
     flash(f"Timesheet #{ts_id} declined.", "success")
     return redirect(url_for("admin_timesheets"))
+
+
+@app.route("/admin/timesheets/create-for-associate", methods=["POST"])
+@login_required
+def admin_ts_create_for_associate():
+    """TS 20 (b) + (c) — admin creates a Draft timesheet for an
+    Associate on a chosen engagement and week, BYPASSING the
+    /portal/timesheets two-prior-WCs window guard. Redirects to the
+    Edit on behalf grid so the admin can fill it in and (optionally)
+    Save & Submit on the Associate's behalf in the next step. Audit
+    log captures the admin who issued it."""
+    if (current_user.role or "").lower() != "admin":
+        flash("Admin access required.", "danger")
+        return redirect(url_for("admin_timesheets"))
+    try:
+        user_id = int(request.form.get("user_id") or "")
+        engagement_id = int(request.form.get("engagement_id") or "")
+    except ValueError:
+        flash("Pick an Associate and an Engagement.", "warning")
+        return redirect(url_for("admin_timesheets"))
+    week_start_raw = (request.form.get("week_start") or "").strip()
+    try:
+        week_start = datetime.date.fromisoformat(week_start_raw)
+    except ValueError:
+        flash("Pick a valid Week Commencing date.", "warning")
+        return redirect(url_for("admin_timesheets"))
+    # Align to the Monday of that week — Associate Portal model
+    # always stores week_start as a Monday.
+    if week_start.weekday() != 0:
+        week_start = week_start - datetime.timedelta(days=week_start.weekday())
+    week_end = week_start + datetime.timedelta(days=6)
+
+    with Session(engine) as s:
+        cand_row = s.execute(text(
+            "SELECT id, name FROM candidates WHERE id = :id"
+        ).bindparams(id=user_id)).first()
+        if not cand_row:
+            flash("Associate not found.", "warning")
+            return redirect(url_for("admin_timesheets"))
+        eng_row = s.execute(text(
+            "SELECT id, name, client FROM engagements WHERE id = :id"
+        ).bindparams(id=engagement_id)).first()
+        if not eng_row:
+            flash("Engagement not found.", "warning")
+            return redirect(url_for("admin_timesheets"))
+        # Duplicate check — open the existing one instead.
+        existing = s.execute(text(
+            "SELECT id FROM timesheets "
+            "WHERE user_id = :uid AND engagement_id = :eid AND period_start = :ws "
+            "LIMIT 1"
+        ).bindparams(uid=user_id, eid=engagement_id, ws=week_start)).first()
+        if existing:
+            flash(
+                f"A timesheet already exists for {cand_row.name} on "
+                f"{eng_row.client} / {eng_row.name} for WC "
+                f"{week_start.strftime('%d/%m/%Y')} — opening it instead.",
+                "info",
+            )
+            return redirect(url_for("admin_edit_timesheet_on_behalf", ts_id=existing.id))
+        # Pull day rate from the Associate's most recent Placed-style
+        # Application on this engagement, mirroring the Associate-side
+        # logic. Falls back to 0 if nothing matches; admin can then
+        # set the rate manually via the engagement plan later.
+        day_rate = 0.0
+        try:
+            app_row = s.execute(text(
+                "SELECT a.offer_day_rate, a.assignment_fee "
+                "FROM applications a "
+                "JOIN jobs j ON j.id = a.job_id "
+                "WHERE a.candidate_id = :uid AND j.engagement_id = :eid "
+                "  AND a.status IN ('Placed','Contract Signed','On Assignment','Active','Contracted','Hired') "
+                "ORDER BY a.created_at DESC LIMIT 1"
+            ).bindparams(uid=user_id, eid=engagement_id)).first()
+            if app_row:
+                if app_row.offer_day_rate:
+                    try:
+                        day_rate = float(app_row.offer_day_rate)
+                    except (TypeError, ValueError):
+                        day_rate = 0.0
+                if not day_rate and app_row.assignment_fee:
+                    import re as _re
+                    nums = _re.findall(r"[\d,]+\.?\d*", str(app_row.assignment_fee).replace(",", ""))
+                    if nums:
+                        try:
+                            day_rate = float(nums[0])
+                        except ValueError:
+                            day_rate = 0.0
+        except Exception:
+            pass
+        ts = Timesheet(
+            user_id=user_id,
+            engagement_id=engagement_id,
+            period_start=week_start,
+            period_end=week_end,
+            status="Draft",
+            timesheet_type="Standard",
+        )
+        if hasattr(ts, "week_start"):
+            ts.week_start = week_start
+            ts.week_end = week_end
+            ts.day_rate = day_rate
+        s.add(ts)
+        s.flush()
+        new_id = ts.id
+        s.commit()
+        try:
+            log_audit_event(
+                "create", "timesheet",
+                f"Admin created timesheet TS-{new_id} for {cand_row.name} on "
+                f"{eng_row.client} / {eng_row.name} WC {week_start.isoformat()}",
+                "timesheet", new_id,
+                {"user_id": user_id, "engagement_id": engagement_id,
+                 "week_start": week_start.isoformat(), "day_rate": day_rate},
+            )
+        except Exception:
+            pass
+    flash(f"Created TS-{new_id} for {cand_row.name} (WC {week_start.strftime('%d/%m/%Y')}). "
+          f"Fill in the grid and Save & Submit when ready.", "success")
+    return redirect(url_for("admin_edit_timesheet_on_behalf", ts_id=new_id))
 
 
 @app.route("/admin/timesheets/<int:ts_id>/create-adjustment", methods=["GET", "POST"])
