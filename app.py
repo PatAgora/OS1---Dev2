@@ -4573,36 +4573,66 @@ def admin_approver_portal_reactivate(user_id: int):
 @app.route("/admin/approver-portal/allocate", methods=["POST"])
 @login_required
 def admin_approver_portal_allocate():
-    """Quick-allocate an existing approver user to an engagement from the
-    Approver Portal Admin page (without leaving the page)."""
+    """Quick-allocate an existing approver user to ONE OR MORE engagements
+    from the Approver Portal Admin page (without leaving the page). Same
+    role applies to every selected engagement; already-allocated rows are
+    skipped (not an error). Posts engagement_ids[] (multi-select)."""
     if (current_user.role or "").lower() not in ("admin", "super_admin"):
         flash("Admin access required.", "danger")
         return redirect(url_for("admin_approver_portal"))
     try:
         user_id = int(request.form.get("user_id") or "")
-        engagement_id = int(request.form.get("engagement_id") or "")
     except ValueError:
-        flash("Pick both a user and an engagement.", "warning")
+        flash("Missing approver — try again from the Assign button.", "warning")
+        return redirect(url_for("admin_approver_portal"))
+    # Accept either the new multi-select name (engagement_ids[]) or the
+    # legacy single-value name (engagement_id) for back-compat.
+    raw_ids = request.form.getlist("engagement_ids[]") or request.form.getlist("engagement_ids") \
+              or ([request.form.get("engagement_id")] if request.form.get("engagement_id") else [])
+    engagement_ids = []
+    for r in raw_ids:
+        try:
+            engagement_ids.append(int(r))
+        except (TypeError, ValueError):
+            continue
+    if not engagement_ids:
+        flash("Pick at least one engagement to assign.", "warning")
         return redirect(url_for("admin_approver_portal"))
     alloc_role = (request.form.get("alloc_role") or "primary").lower()
     if alloc_role not in ("primary", "secondary"):
         alloc_role = "primary"
+
+    created = 0
+    already = 0
     with Session(engine) as s:
-        existing = s.execute(text(
-            "SELECT id FROM engagement_approvers WHERE engagement_id = :eid AND user_id = :uid LIMIT 1"
-        ).bindparams(eid=engagement_id, uid=user_id)).first()
-        if existing:
-            flash("That user is already allocated to that engagement.", "warning")
-            return redirect(url_for("admin_approver_portal"))
-        s.add(EngagementApprover(engagement_id=engagement_id, user_id=user_id, role=alloc_role))
+        for eng_id in engagement_ids:
+            existing = s.execute(text(
+                "SELECT id FROM engagement_approvers WHERE engagement_id = :eid AND user_id = :uid LIMIT 1"
+            ).bindparams(eid=eng_id, uid=user_id)).first()
+            if existing:
+                already += 1
+                continue
+            s.add(EngagementApprover(engagement_id=eng_id, user_id=user_id, role=alloc_role))
+            created += 1
         s.commit()
         try:
-            log_audit_event("create", "engagement",
-                            f"Approver allocated via admin portal (eng={engagement_id}, user={user_id}, role={alloc_role})",
-                            "engagement_approver", 0, {"engagement_id": engagement_id, "user_id": user_id, "role": alloc_role})
+            log_audit_event(
+                "create", "engagement",
+                f"Approver {user_id} allocated to {created} engagement(s) ({already} already linked) via admin portal",
+                "engagement_approver", 0,
+                {"engagement_ids": engagement_ids, "user_id": user_id, "role": alloc_role,
+                 "created": created, "already_linked": already},
+            )
         except Exception:
             pass
-    flash("Approver allocated.", "success")
+    if created and already:
+        flash(f"Allocated {created} new engagement(s); {already} were already linked.", "success")
+    elif created:
+        flash(f"Allocated to {created} engagement(s).", "success")
+    elif already:
+        flash(f"All {already} selected engagement(s) were already linked to this approver — nothing changed.", "info")
+    else:
+        flash("No allocations written.", "warning")
     return redirect(url_for("admin_approver_portal"))
 
 

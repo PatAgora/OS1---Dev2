@@ -191,31 +191,45 @@
     </div>
 </div>
 
-{# ----- Assign-to-engagement modal (shared by every row) ----- #}
+{# ----- Assign-to-engagement modal (shared by every row) -----
+   Multi-select: an approver can be assigned to multiple engagements in
+   one click. Same role applies to every picked engagement.
+#}
 <div class="modal fade" id="assignModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog">
+  <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <form method="POST" action="{{ url_for('admin_approver_portal_allocate') }}">
         <div class="modal-header">
-          <h5 class="modal-title"><i class="fas fa-link me-2"></i>Assign approver to engagement</h5>
+          <h5 class="modal-title"><i class="fas fa-link me-2"></i>Assign approver to engagement(s)</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
         <div class="modal-body">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="user_id" id="assignUserId">
           <p class="text-muted small mb-3">Approver: <strong id="assignUserName"></strong></p>
-          <div class="mb-3">
-            <label class="form-label">Engagement</label>
-            <select name="engagement_id" class="form-select" required>
-              <option value="">— select an engagement —</option>
-              {% for e in engagements %}
-              <option value="{{ e.id }}">{{ e.client }} — {{ e.name }}</option>
-              {% endfor %}
-            </select>
+          <div class="mb-2 d-flex justify-content-between align-items-center">
+            <label class="form-label mb-0">Engagement(s) <span class="text-muted small">— tick one or more</span></label>
+            <div>
+                <input type="text" id="assignEngFilter" class="form-control form-control-sm d-inline-block" style="width:200px;" placeholder="Filter…">
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="assignSelectAll">Select all</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="assignSelectNone">Clear</button>
+            </div>
           </div>
-          <div class="mb-3">
-            <label class="form-label">Role</label>
-            <select name="alloc_role" class="form-select">
+          <div class="border rounded p-2" style="max-height:320px; overflow-y:auto;">
+            {% for e in engagements %}
+            <div class="form-check assign-eng-row" data-search="{{ ((e.client or '') ~ ' ' ~ (e.name or '') ~ ' ' ~ (e.ref or ''))|lower }}">
+              <input class="form-check-input assign-eng-check" type="checkbox" name="engagement_ids[]" value="{{ e.id }}" id="engPick_{{ e.id }}">
+              <label class="form-check-label" for="engPick_{{ e.id }}">
+                <strong>{{ e.client }}</strong> — {{ e.name }} {% if e.ref %}<span class="text-muted small">({{ e.ref }})</span>{% endif %}
+              </label>
+            </div>
+            {% else %}
+            <div class="text-muted small">No engagements available.</div>
+            {% endfor %}
+          </div>
+          <div class="mt-3">
+            <label class="form-label">Role for these allocations</label>
+            <select name="alloc_role" class="form-select" style="max-width:240px;">
               <option value="primary">Primary</option>
               <option value="secondary">Secondary</option>
             </select>
@@ -236,8 +250,36 @@ document.addEventListener('DOMContentLoaded', function () {
       document.getElementById('assignUserId').value = this.dataset.userId;
       document.getElementById('assignUserName').textContent =
         this.dataset.userName || ('User #' + this.dataset.userId);
+      // Clear previous selections + filter so the modal opens fresh.
+      document.querySelectorAll('.assign-eng-check').forEach(function (c) { c.checked = false; });
+      var filt = document.getElementById('assignEngFilter');
+      if (filt) {
+        filt.value = '';
+        document.querySelectorAll('.assign-eng-row').forEach(function (r) { r.style.display = ''; });
+      }
       new bootstrap.Modal(document.getElementById('assignModal')).show();
     });
+  });
+  var filt = document.getElementById('assignEngFilter');
+  if (filt) filt.addEventListener('input', function () {
+    var q = (this.value || '').trim().toLowerCase();
+    document.querySelectorAll('.assign-eng-row').forEach(function (r) {
+      var hit = !q || (r.dataset.search || '').indexOf(q) >= 0;
+      r.style.display = hit ? '' : 'none';
+    });
+  });
+  var btnAll = document.getElementById('assignSelectAll');
+  if (btnAll) btnAll.addEventListener('click', function () {
+    document.querySelectorAll('.assign-eng-row').forEach(function (r) {
+      if (r.style.display !== 'none') {
+        var c = r.querySelector('.assign-eng-check');
+        if (c) c.checked = true;
+      }
+    });
+  });
+  var btnNone = document.getElementById('assignSelectNone');
+  if (btnNone) btnNone.addEventListener('click', function () {
+    document.querySelectorAll('.assign-eng-check').forEach(function (c) { c.checked = false; });
   });
 });
 </script>
