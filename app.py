@@ -8332,28 +8332,36 @@ def admin_portal_user_set_password(cand_id: int):
 @app.route("/admin/portal-users/<int:cand_id>/send-magic-link", methods=["POST"])
 @login_required
 def admin_portal_user_send_magic_link(cand_id: int):
-    """Send a magic link to a portal user."""
+    """Send a magic link to a portal user (Associate Portal sign-in).
+
+    Token salt MUST match the verifier at /portal/verify-email
+    (associate_portal._portal_signer uses salt='associate-portal-link').
+    Previously this admin route used salt='portal-magic-link' — the
+    public.py salt for /auth/verify — so the token failed signature
+    verification at the URL we pointed it at, producing an immediate
+    "Invalid verification link" before the user could do anything."""
     from itsdangerous import URLSafeTimedSerializer
-    
+
     with Session(engine) as s:
         cand = s.get(Candidate, cand_id)
         if not cand:
             flash("Associate not found", "danger")
             return redirect(url_for("admin_portal_users"))
-        
+
         if not cand.email:
             flash("Associate has no email address", "danger")
             return redirect(url_for("admin_portal_user_detail", cand_id=cand_id))
-        
-        # Generate magic link
-        signer = URLSafeTimedSerializer(app.config["SECRET_KEY"], salt="portal-magic-link")
+
+        # Generate magic link. Salt MUST match associate_portal._portal_signer
+        # (which is what /portal/verify-email reads with).
+        signer = URLSafeTimedSerializer(app.config["SECRET_KEY"], salt="associate-portal-link")
         token = signer.dumps({
             "email": cand.email,
             "name": cand.name,
-            "next": "/jobs",
+            "next": "/portal/dashboard",
             "is_signup": False
         })
-        
+
         verify_url = f"{PORTAL_BASE_URL}/portal/verify-email?token={token}"
         
         html_body = f"""
