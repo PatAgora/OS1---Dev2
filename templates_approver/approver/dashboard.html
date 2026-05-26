@@ -89,7 +89,7 @@
     </div>
     <div class="col-md-2">
         <label class="form-label small">Status</label>
-        <select name="status" class="form-select form-select-sm">
+        <select name="status" class="form-select form-select-sm" data-filter="status">
             <option value="submitted" {% if status_filter == 'submitted' %}selected{% endif %}>Submitted</option>
             <option value="approved" {% if status_filter == 'approved' %}selected{% endif %}>Approved</option>
             <option value="rejected" {% if status_filter == 'rejected' %}selected{% endif %}>Rejected</option>
@@ -110,14 +110,25 @@
     catch (e) { dataset = []; }
     var form = document.getElementById('approverFilters');
     if (!form) return;
-    var keys = ['wc', 'client', 'project', 'associate'];
+    // All five filters participate in the adaptive narrowing.
+    var keys = ['wc', 'client', 'project', 'associate', 'status'];
+    // Status options are fixed (submitted/approved/rejected/all) — the JS
+    // doesn't re-render them. The other four dropdowns are rebuilt from
+    // the dataset on every change.
+    var rerenderKeys = ['wc', 'client', 'project', 'associate'];
 
+    function _selVal(k) {
+        var el = form.querySelector('[data-filter="' + k + '"]');
+        if (!el) return '';
+        var v = el.value || '';
+        // Status uses "all" to mean "no filter"; the server treats "all"
+        // and missing the same way. For adaptive filtering, "all" is empty.
+        if (k === 'status' && v === 'all') return '';
+        return v;
+    }
     function currentSelections() {
         var out = {};
-        keys.forEach(function(k) {
-            var el = form.querySelector('[data-filter="' + k + '"]');
-            out[k] = el ? el.value : '';
-        });
+        keys.forEach(function(k) { out[k] = _selVal(k); });
         return out;
     }
     // Re-populate one dropdown using all OTHER selections as the filter.
@@ -153,7 +164,7 @@
         if (!stillValid) el.value = '';
     }
     function refreshAllExcept(except) {
-        keys.forEach(function(k) {
+        rerenderKeys.forEach(function(k) {
             if (k !== except) refreshDropdown(k);
         });
     }
