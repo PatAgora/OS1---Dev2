@@ -14,6 +14,102 @@
     </div>
 </div>
 
+{# ----- Org-wide dashboard tiles + per-engagement breakdown -----
+   "Not submitted" counts Drafts whose WC is on/before
+   {{ overdue_cutoff }} — i.e. it's past the Tuesday of the week
+   following the timesheet's WC, so the Associate has missed the
+   submission deadline. Counters are click-throughs that apply the
+   matching filter to the list below. #}
+<div class="row g-2 mb-3">
+    <div class="col-md-4">
+        <a href="?status=draft" class="text-decoration-none">
+            <div class="card border-0 shadow-sm h-100" style="background:#fef3c7;">
+                <div class="card-body py-3 px-3 d-flex align-items-center gap-3">
+                    <i class="fas fa-exclamation-triangle text-warning" style="font-size:1.6rem;"></i>
+                    <div>
+                        <div style="font-size:1.9rem; font-weight:700; line-height:1; color:#92400e;">{{ overall_counts.not_submitted }}</div>
+                        <div class="small text-muted">Not submitted (overdue)</div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-md-4">
+        <a href="?status=submitted" class="text-decoration-none">
+            <div class="card border-0 shadow-sm h-100" style="background:#dbeafe;">
+                <div class="card-body py-3 px-3 d-flex align-items-center gap-3">
+                    <i class="fas fa-hourglass-half text-primary" style="font-size:1.6rem;"></i>
+                    <div>
+                        <div style="font-size:1.9rem; font-weight:700; line-height:1; color:#1e3a8a;">{{ overall_counts.awaiting }}</div>
+                        <div class="small text-muted">Awaiting approval</div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-md-4">
+        <a href="?status=rejected" class="text-decoration-none">
+            <div class="card border-0 shadow-sm h-100" style="background:#fee2e2;">
+                <div class="card-body py-3 px-3 d-flex align-items-center gap-3">
+                    <i class="fas fa-times-circle text-danger" style="font-size:1.6rem;"></i>
+                    <div>
+                        <div style="font-size:1.9rem; font-weight:700; line-height:1; color:#991b1b;">{{ overall_counts.rejected }}</div>
+                        <div class="small text-muted">Declined (needs resubmission)</div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+</div>
+
+{% if breakdown %}
+<div class="card mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <strong><i class="fas fa-project-diagram me-1"></i> By project</strong>
+        <span class="text-muted small">{{ breakdown|length }} project{{ '' if breakdown|length == 1 else 's' }} with outstanding timesheets</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0" style="font-size:0.85rem;">
+            <thead class="table-light">
+                <tr>
+                    <th>Client</th>
+                    <th>Project</th>
+                    <th class="text-end">Not submitted</th>
+                    <th class="text-end">Awaiting</th>
+                    <th class="text-end">Declined</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for b in breakdown %}
+                <tr>
+                    <td>{{ b.client_name }}</td>
+                    <td>{{ b.engagement_name }}</td>
+                    <td class="text-end">
+                        {% if b.not_submitted > 0 %}
+                        <a class="badge bg-warning text-dark text-decoration-none"
+                           href="?client={{ b.client_name|urlencode }}&project={{ b.engagement_name|urlencode }}&status=draft">{{ b.not_submitted }}</a>
+                        {% else %}<span class="text-muted">—</span>{% endif %}
+                    </td>
+                    <td class="text-end">
+                        {% if b.awaiting > 0 %}
+                        <a class="badge bg-primary text-decoration-none"
+                           href="?client={{ b.client_name|urlencode }}&project={{ b.engagement_name|urlencode }}&status=submitted">{{ b.awaiting }}</a>
+                        {% else %}<span class="text-muted">—</span>{% endif %}
+                    </td>
+                    <td class="text-end">
+                        {% if b.rejected > 0 %}
+                        <a class="badge bg-danger text-decoration-none"
+                           href="?client={{ b.client_name|urlencode }}&project={{ b.engagement_name|urlencode }}&status=rejected">{{ b.rejected }}</a>
+                        {% else %}<span class="text-muted">—</span>{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
 {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
         {% for category, message in messages %}

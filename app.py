@@ -1921,6 +1921,12 @@ def admin_timesheets():
         sql += " AND t.period_start = :wc"
         params["wc"] = wc_filter
     sql += " ORDER BY t.period_start DESC, t.id DESC LIMIT 1000"
+    # Dashboard tile thresholds. A Draft is "Not submitted (overdue)"
+    # once we're past the Tuesday of the week FOLLOWING its WC — i.e.
+    # week_start + 8 calendar days. Configurable here if the deadline
+    # ever moves.
+    _today = date.today()
+    _overdue_cutoff = _today - timedelta(days=8)
     with Session(engine) as s:
         rows = s.execute(text(sql).bindparams(**params)).all()
         # Distinct filter dropdown options across all timesheets.
@@ -1938,6 +1944,49 @@ def admin_timesheets():
             "WHERE c.name IS NOT NULL AND TRIM(c.name) <> '' "
             "ORDER BY c.name"
         )).all()]
+        # ----- Dashboard counts (org-wide) -----
+        # Tiles are NOT scoped by the page filters — they reflect the
+        # whole org so the recruiter always sees the true backlog.
+        overall = s.execute(text("""
+            SELECT
+              SUM(CASE WHEN LOWER(status) = 'draft' AND period_start <= :cutoff THEN 1 ELSE 0 END) AS not_submitted,
+              SUM(CASE WHEN LOWER(status) = 'submitted' THEN 1 ELSE 0 END) AS awaiting,
+              SUM(CASE WHEN LOWER(status) = 'rejected' THEN 1 ELSE 0 END) AS rejected
+            FROM timesheets
+        """).bindparams(cutoff=_overdue_cutoff)).first()
+        overall_counts = {
+            "not_submitted": int(overall.not_submitted or 0) if overall else 0,
+            "awaiting":      int(overall.awaiting or 0)      if overall else 0,
+            "rejected":      int(overall.rejected or 0)      if overall else 0,
+        }
+        # ----- Per-engagement breakdown -----
+        # Per (client, project) row carrying the same three counters.
+        # Only engagements with at least one outstanding TS appear so the
+        # table stays focused on what needs action.
+        bd_rows = s.execute(text("""
+            SELECT e.id, e.client AS client_name, e.name AS engagement_name,
+                   SUM(CASE WHEN LOWER(t.status) = 'draft' AND t.period_start <= :cutoff THEN 1 ELSE 0 END) AS not_submitted,
+                   SUM(CASE WHEN LOWER(t.status) = 'submitted' THEN 1 ELSE 0 END) AS awaiting,
+                   SUM(CASE WHEN LOWER(t.status) = 'rejected' THEN 1 ELSE 0 END) AS rejected
+            FROM engagements e
+            LEFT JOIN timesheets t ON t.engagement_id = e.id
+            GROUP BY e.id, e.client, e.name
+            HAVING
+              SUM(CASE WHEN LOWER(t.status) = 'draft' AND t.period_start <= :cutoff THEN 1 ELSE 0 END)
+              + SUM(CASE WHEN LOWER(t.status) = 'submitted' THEN 1 ELSE 0 END)
+              + SUM(CASE WHEN LOWER(t.status) = 'rejected' THEN 1 ELSE 0 END) > 0
+            ORDER BY e.client, e.name
+        """).bindparams(cutoff=_overdue_cutoff)).all()
+        breakdown = [
+            {
+                "client_name":   r.client_name or "(no client)",
+                "engagement_name": r.engagement_name or "(unnamed)",
+                "not_submitted": int(r.not_submitted or 0),
+                "awaiting":      int(r.awaiting or 0),
+                "rejected":      int(r.rejected or 0),
+            }
+            for r in bd_rows
+        ]
     timesheets = [
         {
             "id": r.id,
@@ -1967,6 +2016,9 @@ def admin_timesheets():
         status_filter=status_filter or "all",
         type_filter=type_filter or "all",
         wc_filter=wc_filter,
+        overall_counts=overall_counts,
+        breakdown=breakdown,
+        overdue_cutoff=_overdue_cutoff,
     )
 
 
