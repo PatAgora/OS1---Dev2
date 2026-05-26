@@ -24160,11 +24160,11 @@ def qc_approve(cand_id: int):
         )
         if not vc:
             flash("Vetting check not found.", "danger")
-            return
+            return redirect(url_for("candidate_profile", cand_id=cand_id))
 
         if vc.assigned_to and vc.assigned_to == current_user.id:
             flash("You cannot QC a check assigned to yourself.", "warning")
-            return
+            return redirect(url_for("candidate_profile", cand_id=cand_id))
 
         vc.qc_status = "qc_approved"
         vc.status = "QC COMPLETE"
@@ -24196,11 +24196,11 @@ def qc_reject(cand_id: int):
         )
         if not vc:
             flash("Vetting check not found.", "danger")
-            return
+            return redirect(url_for("candidate_profile", cand_id=cand_id))
 
         if vc.assigned_to and vc.assigned_to == current_user.id:
             flash("You cannot QC a check assigned to yourself.", "warning")
-            return
+            return redirect(url_for("candidate_profile", cand_id=cand_id))
 
         vc.qc_status = "qc_rejected"
         vc.status = "READY TO START"
@@ -24330,46 +24330,98 @@ def mark_all_qc_complete(cand_id: int):
     QC COMPLETE so the user doesn't have to save 12 dropdowns one at a
     time. Audit-logged so we can see who did it.
     """
-    with Session(engine) as s:
-        cand = s.get(Candidate, cand_id)
-        if not cand:
-            abort(404)
+    try:
+        current_app.logger.info(
+            "mark_all_qc_complete called by user_id=%s role=%s cand_id=%s",
+            getattr(current_user, "id", None),
+            getattr(current_user, "role", None),
+            cand_id,
+        )
+    except Exception:
+        pass
+    SKIP_STATUSES = {"QC COMPLETE", "QC NOT REQUIRED", "COMPLETE",
+                     "N/A", "CHECK STILL IN DATE"}
+    try:
+        with Session(engine) as s:
+            cand = s.get(Candidate, cand_id)
+            if not cand:
+                flash(f"Candidate #{cand_id} not found.", "danger")
+                return redirect(url_for("index"))
 
-        checks = s.scalars(
-            select(VettingCheck).where(VettingCheck.candidate_id == cand_id)
-        ).all()
+            checks = s.scalars(
+                select(VettingCheck).where(VettingCheck.candidate_id == cand_id)
+            ).all()
 
-        flipped = 0
-        for vc in checks:
-            current = (vc.status or "").upper()
-            if current in ("QC COMPLETE", "QC NOT REQUIRED", "COMPLETE", "N/A", "CHECK STILL IN DATE"):
-                continue
-            vc.status = "QC COMPLETE"
-            vc.qc_status = "qc_approved"
-            if not vc.completed_at:
-                vc.completed_at = datetime.datetime.utcnow()
-            flipped += 1
+            flipped = 0
+            skipped = 0
+            skipped_breakdown = {}
+            for vc in checks:
+                current = (vc.status or "").upper().strip()
+                if current in SKIP_STATUSES:
+                    skipped += 1
+                    skipped_breakdown[current] = skipped_breakdown.get(current, 0) + 1
+                    continue
+                vc.status = "QC COMPLETE"
+                vc.qc_status = "qc_approved"
+                if not vc.completed_at:
+                    vc.completed_at = datetime.datetime.utcnow()
+                flipped += 1
 
-        if flipped:
-            s.add(CandidateNote(
-                candidate_id=cand_id,
-                user_email=getattr(current_user, "email", "staff") or "staff",
-                note_type="activity",
-                content=f"Bulk Mark QC Complete — {flipped} check(s) flipped.",
-                created_at=datetime.datetime.utcnow(),
-            ))
+            if flipped:
+                s.add(CandidateNote(
+                    candidate_id=cand_id,
+                    user_email=getattr(current_user, "email", "staff") or "staff",
+                    note_type="activity",
+                    content=f"Bulk Mark QC Complete — {flipped} check(s) flipped.",
+                    created_at=datetime.datetime.utcnow(),
+                ))
+                try:
+                    log_audit_event(
+                        "update", "vetting",
+                        f"Bulk Mark QC Complete: {flipped} checks for candidate #{cand_id}",
+                        "candidate", cand_id,
+                        {"flipped": flipped, "skipped": skipped},
+                    )
+                except Exception:
+                    current_app.logger.exception("mark_all_qc_complete audit log failed")
+
+            s.commit()
+
             try:
-                log_audit_event(
-                    "update", "vetting",
-                    f"Bulk Mark QC Complete: {flipped} checks for candidate #{cand_id}",
-                    "candidate", cand_id,
-                    {"flipped": flipped},
+                current_app.logger.info(
+                    "mark_all_qc_complete done cand_id=%s total=%s flipped=%s skipped=%s breakdown=%s",
+                    cand_id, len(checks), flipped, skipped, skipped_breakdown,
                 )
             except Exception:
-                current_app.logger.exception("mark_all_qc_complete audit log failed")
+                pass
 
-        s.commit()
-        flash(f"Marked {flipped} check{'s' if flipped != 1 else ''} as QC Complete.", "success")
+            if not checks:
+                flash(
+                    f"No vetting checks exist on candidate #{cand_id} — nothing to mark. "
+                    f"Use 'Start Full Vetting' first.",
+                    "warning",
+                )
+            elif flipped:
+                flash(
+                    f"✅ Marked {flipped} check{'s' if flipped != 1 else ''} as QC Complete."
+                    + (f" {skipped} already in a terminal state." if skipped else ""),
+                    "success",
+                )
+            else:
+                # All checks already in a terminal state — explain why nothing happened.
+                breakdown = ", ".join(f"{n}× {st}" for st, n in skipped_breakdown.items())
+                flash(
+                    f"No changes — all {skipped} check(s) are already in a terminal state ({breakdown}).",
+                    "info",
+                )
+    except Exception as exc:
+        try:
+            current_app.logger.exception(
+                "mark_all_qc_complete failed cand_id=%s", cand_id
+            )
+        except Exception:
+            pass
+        flash(f"Mark QC Complete failed: {type(exc).__name__}: {exc}", "danger")
 
     return redirect(url_for("candidate_profile", cand_id=cand_id))
 
