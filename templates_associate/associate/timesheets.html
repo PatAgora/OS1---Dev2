@@ -81,7 +81,6 @@
                 <div><strong>Period:</strong> {{ current_ts.period_start.strftime('%d/%m/%Y') if current_ts.period_start else '' }} – {{ current_ts.period_end.strftime('%d/%m/%Y') if current_ts.period_end else '' }}</div>
                 <div><strong>Status:</strong> {{ current_ts.status or 'Draft' }}</div>
                 <div><strong>Day Rate:</strong> &pound;{{ "%.2f"|format(current_ts.day_rate or 0) }}/d</div>
-                <div><strong>OT Rate:</strong> &pound;{{ "%.2f"|format(current_ts.overtime_rate if current_ts.overtime_rate else ((current_ts.day_rate or 0) / 7.5)) }}/h</div>
             </div>
 
             <!-- Weekly Grid -->
@@ -92,7 +91,7 @@
                         <tr>
                             <th style="min-width: 140px;">Time Type</th>
                             {% for day in week_days %}
-                            <th style="text-align: center; min-width: 80px;">{{ day.short }}<br><small>{{ day.date[8:] }}</small></th>
+                            <th style="text-align: center; min-width: 92px;">{{ day.short }}<br><small>{{ day.date[8:] }}</small></th>
                             {% endfor %}
                             <th style="text-align: center; min-width: 60px;">Total</th>
                         </tr>
@@ -109,11 +108,11 @@
                                 <input type="text" name="entry_{{ day.date }}_{{ tt.replace(' ', '__') }}"
                                        value="{{ entry_val if entry_val else '' }}"
                                        placeholder="0:00" class="form-control form-control-sm text-center ts-input ts-hours"
-                                       style="width: 70px; margin: 0 auto;" data-type="hours">
+                                       style="width: 84px; margin: 0 auto;" data-type="hours">
                                 {% else %}
                                 <select name="entry_{{ day.date }}_{{ tt.replace(' ', '__') }}"
                                         class="form-select form-select-sm text-center ts-input ts-days"
-                                        style="width: 70px; margin: 0 auto;" data-type="days">
+                                        style="width: 84px; margin: 0 auto;" data-type="days">
                                     <option value="0" {% if not entry_val or entry_val == 0 %}selected{% endif %}>0.0</option>
                                     <option value="0.5" {% if entry_val == 0.5 %}selected{% endif %}>0.5</option>
                                     <option value="1" {% if entry_val == 1 or entry_val == 1.0 %}selected{% endif %}>1.0</option>
@@ -674,12 +673,24 @@ function cancelEditExpense() {
     }
     function _isBankHoliday(yyyymmdd) { return BH_SET.has(yyyymmdd); }
 
-    // Shade cells whose date column matches Sat/Sun/BH.
+    // Shade cells whose date column matches Sat/Sun/BH. Day rows
+    // (Standard / Holiday / Sickness) use <select>; the Overtime row
+    // uses <input>. Both weekends and bank holidays render in the same
+    // muted grey so the user can see "this is a non-working day" at a
+    // glance; the title attribute disambiguates on hover.
+    var NWD_BG = '#e5e7eb';   // cell background (grey-200)
+    var NWD_FG = '#6b7280';   // muted text (grey-500)
+    function _applyNwdStyles(cell, hoverText) {
+        cell.style.background = NWD_BG;
+        cell.title = hoverText;
+        // Tint the input / select itself so it blends with the cell.
+        cell.querySelectorAll('input, select').forEach(function(c) {
+            c.style.background = NWD_BG;
+            c.style.color = NWD_FG;
+            c.style.borderColor = '#d1d5db';
+        });
+    }
     function shadeNonWorkingDays() {
-        // The timesheet grid renders cells with name="entry_<date>_<time_type>".
-        // Day rows (Standard / Holiday / Sickness) use <select>; the Overtime
-        // row uses <input>. Need to match both element types — earlier this
-        // selector was input-only and only the Overtime row got tinted.
         document.querySelectorAll('input[name^="entry_"], select[name^="entry_"]').forEach(function(el) {
             var m = el.name.match(/^entry_(\d{4}-\d{2}-\d{2})_/);
             if (!m) return;
@@ -687,11 +698,9 @@ function cancelEditExpense() {
             var cell = el.closest('td') || el.parentElement;
             if (!cell) return;
             if (_isBankHoliday(iso)) {
-                cell.style.background = '#fef3c7';     // amber tint = bank holiday
-                cell.title = 'Bank holiday — entering time on this day will prompt a warning.';
+                _applyNwdStyles(cell, 'Bank holiday — entering time on this day will prompt a warning.');
             } else if (_isWeekendDate(iso)) {
-                cell.style.background = '#f3f4f6';     // light grey = weekend
-                cell.title = 'Weekend — entering time on this day will prompt a warning.';
+                _applyNwdStyles(cell, 'Weekend — entering time on this day will prompt a warning.');
             }
         });
     }
