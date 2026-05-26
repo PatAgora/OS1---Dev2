@@ -230,7 +230,7 @@ app.config["SECRET_KEY"] = SECRET_KEY
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
 # Session timeout configuration (30 minutes for regular sessions)
-from datetime import timedelta
+from datetime import timedelta, date
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=60)
 app.config['SESSION_REFRESH_EACH_REQUEST'] = True  # Refresh timeout on each request
 
