@@ -48,13 +48,12 @@
         <form method="POST">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="row g-3 align-items-end">
-                <div class="col-md-4">
+                <div class="col-md-3">
                     <label class="form-label">Day delta</label>
                     <input type="number" name="day_delta" step="0.5" class="form-control"
-                           placeholder="e.g. -1.0 to credit, +0.5 to debit" required>
-                    <div class="form-text">Positive = client undercharged (extra to bill). Negative = client overcharged (credit).</div>
+                           placeholder="e.g. -1.0 or +0.5" required>
                 </div>
-                <div class="col-md-6">
+                <div class="col-md-7">
                     <label class="form-label">Reason</label>
                     <input type="text" name="reason" class="form-control"
                            placeholder="e.g. Original timesheet incorrectly recorded 5 days; actual was 4">
@@ -65,6 +64,9 @@
                         <i class="fas fa-save me-1"></i> Create
                     </button>
                 </div>
+            </div>
+            <div class="form-text mt-2">
+                <strong>Day delta:</strong> positive = client undercharged (extra to bill); negative = client overcharged (credit).
             </div>
         </form>
     </div>
