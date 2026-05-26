@@ -865,10 +865,6 @@ I hope you are well. I am pleased to confirm that {client_name} would like to in
             <code style="background: #e0e7ff; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem;">{company_name}</code>
             <small class="text-muted">Company name</small>
           </div>
-          <div class="d-flex align-items-center gap-2 mb-1">
-            <code style="background: #e0e7ff; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem;">{company_website}</code>
-            <small class="text-muted">Company website</small>
-          </div>
         </div>
       </div>
     </div>
@@ -1455,8 +1451,8 @@ Following your offer of engagement with Optimus, the next step is to complete ou
       <label class="form-label fw-semibold mb-1" style="font-size: 0.8rem;">Checks</label>
       <div class="row">
         {% set profile_check_types = [
-          "Right to Work", "Identity Verification", "Address History", "DBS Check",
-          "Employment History", "References", "Qualifications", "Professional Registration",
+          "Right to Work", "Identity Verification", "DBS Check",
+          "References", "Qualifications", "Professional Registration",
           "Credit Check", "Directorship / Disqualification", "Sanctions / PEP", "Social Media Review"
         ] %}
         {% for ct in profile_check_types %}
@@ -1509,7 +1505,7 @@ Following your offer of engagement with Optimus, the next step is to complete ou
                 <input type="text" name="name" class="form-control form-control-sm" value="{{ vp.name }}" required style="max-width:300px;">
               </div>
               <div class="d-flex flex-wrap gap-2 mb-2">
-                {% for ct in ["Right to Work", "Identity Verification", "Address History", "DBS Check", "Employment History", "References", "Qualifications", "Professional Registration", "Credit Check", "Directorship / Disqualification", "Sanctions / PEP", "Social Media Review"] %}
+                {% for ct in ["Right to Work", "Identity Verification", "DBS Check", "References", "Qualifications", "Professional Registration", "Credit Check", "Directorship / Disqualification", "Sanctions / PEP", "Social Media Review"] %}
                 <label class="form-check-label small" style="min-width:160px;">
                   <input type="checkbox" name="profile_check" value="{{ ct }}" class="form-check-input" {% if ct in vp.checks %}checked{% endif %}> {{ ct }}
                 </label>
@@ -1549,8 +1545,8 @@ Following your offer of engagement with Optimus, the next step is to complete ou
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="row g-2">
         {% set all_check_types = [
-          "Right to Work", "Identity Verification", "Address History", "DBS Check",
-          "Employment History", "References", "Qualifications", "Professional Registration",
+          "Right to Work", "Identity Verification", "DBS Check",
+          "References", "Qualifications", "Professional Registration",
           "Credit Check", "Directorship / Disqualification", "Sanctions / PEP", "Social Media Review"
         ] %}
         {% for ct in all_check_types %}

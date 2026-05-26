@@ -119,6 +119,22 @@
                     <label class="form-label" for="country">Country</label>
                     <input type="text" id="country" name="country" class="form-control" value="{{ profile.country if profile and profile.country else 'United Kingdom' }}">
                 </div>
+                <div class="col-md-12">
+                    <label class="form-label">Is your current home address in Scotland? <span class="text-danger">*</span></label>
+                    <div class="d-flex gap-4 mt-1">
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="current_address_in_scotland" id="scotland_yes" value="yes" required
+                                   {% if profile and profile.current_address_in_scotland == true %}checked{% endif %}>
+                            <label class="form-check-label" for="scotland_yes">Yes</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="current_address_in_scotland" id="scotland_no" value="no" required
+                                   {% if profile and profile.current_address_in_scotland == false %}checked{% endif %}>
+                            <label class="form-check-label" for="scotland_no">No</label>
+                        </div>
+                    </div>
+                    <small class="text-muted">This determines which criminal-record (DBS) check is requested for your background screening.</small>
+                </div>
             </div>
         </div>
     </div>

@@ -1341,7 +1341,7 @@
                width via flex-fill so the tile sizing is consistent.
                Mark all QC Complete is inlined here alongside the rest of
                the vetting actions. #}
-            {% set ref_types = ['References', 'Employment History'] %}
+            {% set ref_types = ['References'] %}
             {% set non_ref_in_progress = vetting_checks|selectattr('status', 'in', ['In Progress', 'SENT TO QC', 'QC IN PROGRESS'])|rejectattr('type', 'in', ref_types)|list|length %}
             {% set non_ref_complete = vetting_checks|selectattr('status', 'in', ['COMPLETE', 'QC COMPLETE', 'QC NOT REQUIRED', 'CHECK STILL IN DATE'])|rejectattr('type', 'in', ref_types)|list|length %}
             {% set vetting_started = non_ref_in_progress > 0 or non_ref_complete > 0 %}
@@ -1423,6 +1423,26 @@
                   {% set vf_is_failed = 'failed' in vf_lower or 'red' in vf_lower or 'void' in vf_lower or 'cancelled' in vf_lower %}
                   <div class="py-1 px-2 rounded mt-1" style="font-size:0.7rem; background:{{ '#dcfce7' if vf_is_complete else '#fee2e2' if vf_is_failed else '#f0f9ff' }}; border:1px solid {{ '#86efac' if vf_is_complete else '#fca5a5' if vf_is_failed else '#bae6fd' }}; color:{{ '#166534' if vf_is_complete else '#991b1b' if vf_is_failed else '#0369a1' }};">
                     <i class="fas fa-{{ 'check-double' if vf_is_complete else 'times-circle' if vf_is_failed else 'sync' }} me-1"></i>Verifile — {{ check.verifile_result }}{% if check.verifile_confirmed_at %} ({{ check.verifile_confirmed_at.strftime('%d %b %Y') }}){% endif %}
+                  </div>
+                  {% endif %}
+
+                  {# Req 27 — credit-check address review. Verifile flags when
+                     the current address was not verified against the credit
+                     file; the re-run against further addresses is actioned
+                     in the Verifile portal. #}
+                  {% if check.credit_address_review and check.credit_address_review.needs_review %}
+                  <div class="py-1 px-2 rounded mt-1" style="font-size:0.7rem; background:#fffbeb; border:1px solid #fde68a; color:#92400e;">
+                    <i class="fas fa-map-marker-alt me-1"></i><strong>Additional address checks may be required.</strong>
+                    The credit check did not verify the current address.
+                    {% if check.credit_address_review.addresses %}
+                    <div class="mt-1">Addresses Verifile holds:</div>
+                    <ul class="mb-1" style="padding-left:1.1rem;">
+                      {% for addr in check.credit_address_review.addresses %}
+                      <li>{{ addr }}</li>
+                      {% endfor %}
+                    </ul>
+                    {% endif %}
+                    <div>Re-run the credit check against the further address(es) in the Verifile portal.</div>
                   </div>
                   {% endif %}
 

@@ -178,6 +178,9 @@ def _ensure_models():
         city = Column(String(200), default="")
         postcode = Column(String(20), default="")
         country = Column(String(100), default="United Kingdom")
+        # Req 26 — drives the DBS criminal-record variant (England & Wales vs
+        # Scotland) and, in future, the regional vetting package.
+        current_address_in_scotland = Column(Boolean, nullable=True)
         contact_number = Column(String(50), default="")
         emergency_contact_name = Column(String(200), default="")
         emergency_contact_phone = Column(String(50), default="")
@@ -857,29 +860,35 @@ def _calc_completeness(s, candidate_id: int) -> dict:
         if doc_count >= 2:
             checks_score += 1
 
-    # Employment history — must cover 3 years back from today
+    # Employment history — must cover 5 years back from today
     if EmploymentHistory:
         emp_rows = s.query(EmploymentHistory).filter_by(candidate_id=candidate_id).filter(
             EmploymentHistory.is_gap == False  # noqa: E712
         ).order_by(EmploymentHistory.start_date.asc()).all()
         if emp_rows:
-            three_years_ago = (datetime.utcnow() - timedelta(days=3*365)).date()
+            five_years_ago = (datetime.utcnow() - timedelta(days=5*365)).date()
             earliest_start = None
             for e in emp_rows:
                 sd = getattr(e, "start_date", None)
                 if sd:
                     if earliest_start is None or sd < earliest_start:
                         earliest_start = sd
-            if earliest_start and earliest_start <= three_years_ago:
+            if earliest_start and earliest_start <= five_years_ago:
                 checks_score += 1
 
-    # Vetting checks — all 12 must be complete
+    # Vetting checks — all live checks must be complete. Req 26 retired
+    # Employment History and Address History, so stale rows of those types
+    # on in-flight candidates are excluded from both counts.
     if VettingCheck:
-        total_vc = s.query(VettingCheck).filter_by(candidate_id=candidate_id).count()
+        _live_check = VettingCheck.check_type.notin_(["Employment History", "Address History"])
+        total_vc = s.query(VettingCheck).filter_by(candidate_id=candidate_id).filter(
+            _live_check
+        ).count()
         completed_vc = s.query(VettingCheck).filter_by(candidate_id=candidate_id).filter(
+            _live_check,
             func.upper(VettingCheck.status).in_(["COMPLETE", "N/A", "QC COMPLETE", "QC NOT REQUIRED", "REFERRAL APPROVED"])
         ).count()
-        if total_vc >= 12 and completed_vc >= total_vc:
+        if total_vc >= 10 and completed_vc >= total_vc:
             checks_score += 1
 
     checks_pct = int(round(checks_score / checks_total * 100)) if checks_total else 0
@@ -968,6 +977,7 @@ def _create_portal_tables():
                 "ALTER TABLE associate_profiles ADD COLUMN country_of_birth VARCHAR(100) DEFAULT ''",
                 "ALTER TABLE associate_profiles ADD COLUMN town_of_birth VARCHAR(100) DEFAULT ''",
                 "ALTER TABLE associate_profiles ADD COLUMN mother_maiden_name VARCHAR(100) DEFAULT ''",
+                "ALTER TABLE associate_profiles ADD COLUMN current_address_in_scotland BOOLEAN",
             ]:
                 try:
                     conn.execute(text(col_stmt))
@@ -1602,6 +1612,12 @@ def personal_details():
             profile.city = _sanitise(request.form.get("city", ""))
             profile.postcode = _sanitise(request.form.get("postcode", ""))
             profile.country = _sanitise(request.form.get("country", "United Kingdom"))
+            # Req 26 — Scotland answer drives the DBS criminal-record variant.
+            _scotland = (request.form.get("current_address_in_scotland", "") or "").strip().lower()
+            profile.current_address_in_scotland = (
+                True if _scotland == "yes"
+                else (False if _scotland == "no" else None)
+            )
             profile.contact_number = _sanitise(request.form.get("contact_number", ""))
             profile.emergency_contact_name = _sanitise(request.form.get("emergency_contact_name", ""))
             profile.emergency_contact_phone = _sanitise(request.form.get("emergency_contact_phone", ""))
@@ -2669,7 +2685,11 @@ def vetting_progress():
     with SASession(engine) as s:
         checks = []
         if VettingCheck:
-            checks = s.query(VettingCheck).filter_by(candidate_id=cand_id).order_by(
+            # Req 26 — Employment History and Address History retired as
+            # vetting checks; hide any rows that pre-date the change.
+            checks = s.query(VettingCheck).filter_by(candidate_id=cand_id).filter(
+                VettingCheck.check_type.notin_(["Employment History", "Address History"])
+            ).order_by(
                 VettingCheck.check_type.asc()
             ).all()
 
@@ -5813,5 +5833,17 @@ def _check_employment_complete(session_obj, cand_id):
                 )
                 if not gap_covered:
                     return False, f"Unexplained gap of {gap_days} days between entries. Please add a gap explanation."
+
+    # Coverage requirement — the timeline must reach back a full 5 years.
+    # Soft warning only (caller does not hard-block on this).
+    if sorted_entries:
+        earliest_start = sorted_entries[0].start_date
+        five_years_ago = (datetime.utcnow() - timedelta(days=5*365)).date()
+        if earliest_start and earliest_start > five_years_ago:
+            years_covered = (datetime.utcnow().date() - earliest_start).days / 365.0
+            return False, (
+                f"Your employment history currently covers about {years_covered:.1f} years. "
+                "A full 5 years is required — please add an earlier employment or gap entry."
+            )
 
     return True, ""

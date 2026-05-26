@@ -21,9 +21,9 @@
 
         <h6 class="mt-3 mb-2">Coverage Requirement</h6>
         <ul>
-            <li>You must provide employment reference details covering the full <strong>3 years</strong> prior to today's date.</li>
+            <li>You must provide employment reference details covering the full <strong>5 years</strong> prior to today's date.</li>
             <li>All employment periods within this window must be listed, including part-time, contract, temporary, and agency work.</li>
-            <li>The entire 3-year period must be accounted for with no unexplained gaps.</li>
+            <li>The entire 5-year period must be accounted for with no unexplained gaps.</li>
         </ul>
 
         <h6 class="mt-3 mb-2">Employment Gaps</h6>
@@ -222,7 +222,7 @@
 <!-- Add Employment Entry -->
 <div class="portal-card mb-4">
     <div class="portal-card-header">
-        <h3><i class="fas fa-plus-circle me-2"></i>Add Employment Entry</h3>
+        <h3><i class="fas fa-plus-circle me-2"></i>Save Employment Entry</h3>
     </div>
     <div class="portal-card-body">
         <form method="POST" action="/portal/references/add-employment" id="addEmploymentForm">
@@ -305,7 +305,7 @@
 
             <div class="mt-4">
                 <button type="submit" class="btn btn-primary">
-                    <i class="fas fa-plus me-1"></i> Add Employment Entry
+                    <i class="fas fa-save me-1"></i> Save Employment Entry
                 </button>
             </div>
         </form>
@@ -315,7 +315,7 @@
 <!-- Add Gap Entry -->
 <div class="portal-card mb-4">
     <div class="portal-card-header">
-        <h3><i class="fas fa-pause-circle me-2"></i>Add Gap Entry</h3>
+        <h3><i class="fas fa-pause-circle me-2"></i>Save Gap Entry</h3>
     </div>
     <div class="portal-card-body">
         <form method="POST" action="/portal/references/add-gap" id="addGapForm" enctype="multipart/form-data">
@@ -369,7 +369,7 @@
 
             <div class="mt-4">
                 <button type="submit" class="btn btn-warning">
-                    <i class="fas fa-plus me-1"></i> Add Gap Entry
+                    <i class="fas fa-save me-1"></i> Save Gap Entry
                 </button>
             </div>
         </form>
@@ -775,7 +775,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 cancelBtn.onclick = function() {
                     form.action = '/portal/references/add-employment';
                     form.reset();
-                    submitBtn.innerHTML = '<i class="fas fa-plus me-1"></i> Add Employment Entry';
+                    submitBtn.innerHTML = '<i class="fas fa-save me-1"></i> Save Employment Entry';
                     submitBtn.classList.remove('btn-success');
                     submitBtn.classList.add('btn-primary');
                     cancelBtn.remove();

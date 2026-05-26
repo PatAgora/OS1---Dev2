@@ -70,18 +70,8 @@ export default defineConfig({
     },
 
     // ================================================================
-    // Cross-browser projects — run the same staff smoke tests on
-    // Firefox and WebKit. Use: npx playwright test --project=firefox
+    // Cross-browser: Safari (WebKit)
     // ================================================================
-    {
-      name: 'firefox',
-      testDir: './tests/staff',
-      dependencies: ['staff-auth-setup'],
-      use: {
-        ...devices['Desktop Firefox'],
-        storageState: 'playwright/.auth/admin.json',
-      },
-    },
     {
       name: 'webkit',
       testDir: './tests/staff',

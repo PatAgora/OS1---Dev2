@@ -63,8 +63,8 @@ setup('authenticate as associate', async ({ page }) => {
       if (await totpField.isVisible({ timeout: 1000 }).catch(() => false)) {
         await totpField.fill('');
       }
-      // Backup codes are single-use. Use index 5+ (0-4 already consumed).
-      const codeIndex = 5;
+      // Backup codes are single-use. Use index 7+ (0-6 already consumed).
+      const codeIndex = 7;
       await backupInput.fill(TEST_BACKUP_CODES[codeIndex]);
       console.log(`  Submitting backup code [${codeIndex}]: ${TEST_BACKUP_CODES[codeIndex]}`);
       // Click the submit button inside the backup section (not the hidden TOTP section)

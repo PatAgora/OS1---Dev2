@@ -5338,7 +5338,6 @@ def api_interview_email_preview(cand_id):
             "client_contact_name": (getattr(eng, "client_contact_name", "") or "") if eng else "",
             "client_role": (getattr(eng, "client_contact_role", "") or "") if eng else "",
             "company_name": (eng.client if eng else "") or "",
-            "company_website": "",
             "teams_link": _teams_url or "(link to follow)",
         }
         for key, val in placeholders.items():
@@ -9050,9 +9049,9 @@ class OpportunityNote(Base):
 class VettingCheck(Base):
     """
     Pre-employment vetting check items for each candidate.
-    12 check types as per wireframe:
-    - Right to Work, Identity Verification, Address History, DBS Check,
-    - Employment History, References, Qualifications, Professional Registration,
+    10 check types (Req 26 retired Employment History and Address History):
+    - Right to Work, Identity Verification, DBS Check,
+    - References, Qualifications, Professional Registration,
     - Credit Check, Directorship/Disqualification, Sanctions/PEP, Social Media Review
     """
     __tablename__ = "vetting_check"
@@ -12264,8 +12263,12 @@ def send_email(
     SMTP ports are blocked), falls back to SMTP if Brevo key not configured.
     Returns True on success, raises exception on failure.
     """
-    # Append email signature with logo to all outgoing emails
+    # Append email signature with logo to all outgoing emails.
+    # The contact address in the signature reflects the mailbox the email
+    # is sent from (associates@ for interview/associate mail, compliance@
+    # for vetting, finance@ for invoices) rather than a hardcoded address.
     _base_url = _resolve_app_base_url()
+    _sig_email = (from_email or SMTP_FROM or COMPLIANCE_FROM).strip()
     _email_signature = f'''
 <br><br>
 <table cellpadding="0" cellspacing="0" border="0" style="font-family: Arial, sans-serif; font-size: 12px; color: #6b7280; line-height: 1.6;">
@@ -12277,7 +12280,7 @@ def send_email(
   <tr>
     <td style="border-top: 2px solid #2563eb; padding-top: 10px;">
       71-75 Shelton Street | London | WC2H 9JQ<br>
-      <a href="mailto:compliance@optimussolutions.co.uk" style="color: #2563eb; text-decoration: none;">compliance@optimussolutions.co.uk</a><br>
+      <a href="mailto:{_sig_email}" style="color: #2563eb; text-decoration: none;">{_sig_email}</a><br>
       <strong style="color: #1e3a8a;">Optimus</strong> — Financial Services Resourcing Specialists
     </td>
   </tr>
@@ -15221,8 +15224,8 @@ def api_workflow_move():
             # Vetting completeness check for drag-drop moves to Ready to Contract
             if new_status in ("Ready to Contract", "Contract Sent", "Placed"):
                 _ALL_CHECKS = [
-                    "Right to Work", "Identity Verification", "Address History", "DBS Check",
-                    "Employment History", "References", "Qualifications", "Professional Registration",
+                    "Right to Work", "Identity Verification", "DBS Check",
+                    "References", "Qualifications", "Professional Registration",
                     "Credit Check", "Directorship / Disqualification", "Sanctions / PEP", "Social Media Review"
                 ]
                 _vet_checks = s.execute(
@@ -15481,8 +15484,8 @@ def workflow_move():
         # Vetting completeness check: cannot move to Ready to Contract unless all checks done
         if new_status in ("Ready to Contract", "Contract Sent", "Placed") and not force_move:
             ALL_VETTING_CHECKS = [
-                "Right to Work", "Identity Verification", "Address History", "DBS Check",
-                "Employment History", "References", "Qualifications", "Professional Registration",
+                "Right to Work", "Identity Verification", "DBS Check",
+                "References", "Qualifications", "Professional Registration",
                 "Credit Check", "Directorship / Disqualification", "Sanctions / PEP", "Social Media Review"
             ]
             all_checks = s.execute(
@@ -15865,8 +15868,8 @@ def _placements_inner():
             _vc_by_cand.setdefault(vc.candidate_id, []).append(vc)
 
         _CHECK_EXPIRY_MONTHS_PL = {
-            "Right to Work": 12, "Identity Verification": 36, "Address History": 36,
-            "DBS Check": 12, "Employment History": 36, "References": 36,
+            "Right to Work": 12, "Identity Verification": 36,
+            "DBS Check": 12, "References": 36,
             "Qualifications": 0, "Professional Registration": 12,
             "Credit Check": 12, "Directorship / Disqualification": 12,
             "Sanctions / PEP": 12, "Social Media Review": 6,
@@ -18154,7 +18157,7 @@ def action_verifile(app_id):
 # Verifile product catalogue: https://www.verifile.co.uk/screening-services
 # API developer docs: https://developer.verifile.co.uk/
 
-# Map our 12 vetting check types to Verifile's actual product names.
+# Map our vetting check types to Verifile's actual product names.
 # These use Verifile's exact product naming from their catalogue.
 # The DBS level can be overridden per-engagement via VERIFILE_DBS_LEVEL env var.
 VERIFILE_DBS_LEVEL = os.getenv("VERIFILE_DBS_LEVEL", "Basic")  # Basic, Standard, or Enhanced
@@ -18164,18 +18167,99 @@ VERIFILE_CHECK_MAP = {
     "DBS Check": "UKCriminalRecordBasicEnglandWales",
     "Identity Verification": "UKOnlineIDCheck",
     "Right to Work": "UKRightToWorkDigitalConditional",
-    "Address History": "Activity",
-    "Employment History": "EmploymentHistoryUK",
+    # Req 26 — Employment History and Address History retired as vetting checks.
     "References": "CharacterProfessionalReferenceUK",
     "Qualifications": "AcademicQualificationUK",
     "Professional Registration": "ProfessionalMembershipQualificationUK",
 
     # Credit and Financial Checks
-    "Credit Check": "UKCreditCheckExperian",
+    # Req 26 — Optimus uses the Equifax credit product, not Experian.
+    "Credit Check": "UKCreditCheckEquifax",
     "Directorship / Disqualification": "UKInvestigativeDirectorshipsSearch",
     "Sanctions / PEP": "GlobalFraudandSanctionsSearch",
     "Social Media Review": "ClassicSocialMediaSearch",
 }
+
+# Req 26 — DBS criminal-record CheckTypeId varies by region. The map above
+# holds the England & Wales basic check; for an associate whose current
+# home address is in Scotland the Scotland variant is used instead. The
+# region is driven by the "current address in Scotland" answer captured on
+# the associate portal personal-details page.
+VERIFILE_DBS_SCOTLAND_CHECK_ID = "UKCriminalRecordBasicScotland"
+
+
+def _verifile_resolve_check_id(check_type: str, in_scotland: bool) -> str:
+    """Map an OS1 vetting check type to its Verifile CheckTypeId, selecting
+    the Scotland DBS variant when the associate's current home address is in
+    Scotland (Req 26)."""
+    if check_type == "DBS Check" and in_scotland:
+        return VERIFILE_DBS_SCOTLAND_CHECK_ID
+    return VERIFILE_CHECK_MAP.get(check_type, "")
+
+
+def _verifile_credit_address_review(external_result) -> dict:
+    """Req 27 — inspect a stored Verifile UK Credit Check result and report
+    whether additional address checks may be required.
+
+    Verifile's credit result records whether the candidate's current address
+    was verified against the credit file (CheckCreditEquifaxCurrentAddressVarified)
+    and carries the list of addresses Verifile holds (Candidate.AddressList).
+    There is no formal "Additional Checks Required" status code — OS1 derives
+    the flag from the result data. The re-run against further addresses is
+    actioned in the Verifile web portal, not via the API.
+
+    Returns a dict {needs_review, current_address_verified, addresses}.
+    Fails closed (needs_review False, no addresses) on any parse error so a
+    surprising result shape can never break the candidate profile page.
+    """
+    out = {"needs_review": False, "current_address_verified": None, "addresses": []}
+    if not external_result:
+        return out
+    try:
+        data = external_result if isinstance(external_result, (dict, list)) \
+            else json.loads(external_result)
+    except Exception:
+        return out
+
+    found = {}
+
+    def _walk(node):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                kl = str(k).lower()
+                if kl == "checkcreditequifaxcurrentaddressvarified" and v is not None:
+                    found["current_verified"] = str(v).strip().lower()
+                if kl == "addresslist" and isinstance(v, list):
+                    found.setdefault("address_list", v)
+                _walk(v)
+        elif isinstance(node, list):
+            for item in node:
+                _walk(item)
+
+    try:
+        _walk(data)
+    except Exception:
+        return out
+
+    cv = found.get("current_verified")
+    if cv is not None:
+        verified = cv in ("yes", "true", "verified", "y", "1")
+        out["current_address_verified"] = verified
+        if cv in ("no", "false", "n", "0", "notverified", "unverified"):
+            out["needs_review"] = True
+
+    for addr in (found.get("address_list") or []):
+        if isinstance(addr, dict):
+            parts = []
+            for fld in ("AddressLine1", "AddressLine2", "Town", "County", "PostCode", "Country"):
+                val = addr.get(fld) or addr.get(fld.lower())
+                if val:
+                    parts.append(str(val).strip())
+            if parts:
+                out["addresses"].append(", ".join(parts))
+        elif isinstance(addr, str) and addr.strip():
+            out["addresses"].append(addr.strip())
+    return out
 
 # Full Verifile product catalogue (for reference / future use)
 VERIFILE_ALL_PRODUCTS = {
@@ -18249,15 +18333,15 @@ CLIENT_ENTRY_CHECKS = set()  # All checks via candidate-entry for now
 
 # All checks go via candidate-entry (candidate fills in details via Verifile portal)
 CANDIDATE_ENTRY_CHECKS = {
-    "Right to Work", "Identity Verification", "Address History", "DBS Check",
-    "Employment History", "References", "Qualifications", "Professional Registration",
+    "Right to Work", "Identity Verification", "DBS Check",
+    "References", "Qualifications", "Professional Registration",
     "Credit Check", "Directorship / Disqualification", "Sanctions / PEP", "Social Media Review",
 }
 
 # Data-rich client-entry checks that need per-check Checks array instead of CheckGroups.
 # If portal data is not available for these, they fall back to candidate-entry.
 DATA_RICH_CLIENT_ENTRY_CHECKS = {
-    "Employment History", "References", "Qualifications", "Professional Registration",
+    "References", "Qualifications", "Professional Registration",
 }
 
 
@@ -18272,7 +18356,8 @@ def _load_profile_data(candidate_id: int) -> dict | None:
                 "SELECT first_name, surname, dob, gender, address_line1, address_line2, city, postcode, "
                 "national_insurance_number, passport_number, passport_issuing_country, passport_issue_date, "
                 "passport_expiry_date, driving_licence_number, driving_licence_issuing_country, "
-                "driving_licence_issue_date, country_of_birth, town_of_birth, mother_maiden_name "
+                "driving_licence_issue_date, country_of_birth, town_of_birth, mother_maiden_name, "
+                "current_address_in_scotland "
                 "FROM associate_profiles WHERE candidate_id = :cid"
             ), {"cid": candidate_id}).first()
             if row:
@@ -18384,6 +18469,7 @@ def verifile_place_order(name: str, email: str, candidate_id: int, check_types: 
 
     # Load DOB and name from profile if available
     dob_str = None
+    in_scotland = False
     try:
         from associate_portal import _portal_model
         AP = _portal_model("AssociateProfile")
@@ -18396,13 +18482,15 @@ def verifile_place_order(name: str, email: str, candidate_id: int, check_types: 
                     first_name = prof.first_name
                 if prof and getattr(prof, 'surname', ''):
                     last_name = prof.surname
+                if prof and getattr(prof, 'current_address_in_scotland', None):
+                    in_scotland = True
     except Exception:
         pass
 
     import uuid as _uuid
     check_groups = []
     for ct in check_types:
-        check_type_id = VERIFILE_CHECK_MAP.get(ct, "")
+        check_type_id = _verifile_resolve_check_id(ct, in_scotland)
         if check_type_id:
             check_groups.append({"CheckTypeId": check_type_id, "Quantity": 1})
 
@@ -18489,9 +18577,10 @@ def verifile_place_client_entry_order(email: str, candidate_id: int, check_types
     headers = _verifile_headers()
     import uuid as _uuid
 
+    in_scotland = bool(profile.get("current_address_in_scotland"))
     check_groups = []
     for ct in check_types:
-        check_type_id = VERIFILE_CHECK_MAP.get(ct, "")
+        check_type_id = _verifile_resolve_check_id(ct, in_scotland)
         if check_type_id:
             check_groups.append({"CheckTypeId": check_type_id, "Quantity": 1})
 
@@ -18712,9 +18801,10 @@ def verifile_place_client_entry_order_with_checks(
     }
 
     # If we have simple checks, add CheckGroups
+    in_scotland = bool(profile.get("current_address_in_scotland"))
     check_groups = []
     for ct in simple_check_types:
-        check_type_id = VERIFILE_CHECK_MAP.get(ct, "")
+        check_type_id = _verifile_resolve_check_id(ct, in_scotland)
         if check_type_id:
             check_groups.append({"CheckTypeId": check_type_id, "Quantity": 1})
 
@@ -19030,8 +19120,8 @@ def webhook_verifile():
 
         # Check if ALL vetting is now complete — auto-advance workflow
         ALL_VETTING_CHECKS = [
-            "Right to Work", "Identity Verification", "Address History", "DBS Check",
-            "Employment History", "References", "Qualifications", "Professional Registration",
+            "Right to Work", "Identity Verification", "DBS Check",
+            "References", "Qualifications", "Professional Registration",
             "Credit Check", "Directorship / Disqualification", "Sanctions / PEP", "Social Media Review"
         ]
         all_checks = s.execute(
@@ -19080,6 +19170,10 @@ def api_vetting_poll_verifile(cand_id):
             .where(VettingCheck.status.in_(["In Progress", "NOT STARTED"]))
         ).scalars().all()
 
+        # Req 26 — resolve the DBS variant the same way the order was placed.
+        _prof = _load_profile_data(cand_id) or {}
+        in_scotland = bool(_prof.get("current_address_in_scotland"))
+
         updated = 0
         # Group checks by order_id (external_ref) since all checks share one order
         order_ids = set(vc.external_ref for vc in checks if vc.external_ref)
@@ -19090,7 +19184,7 @@ def api_vetting_poll_verifile(cand_id):
                 for vc in checks:
                     if vc.external_ref != order_id:
                         continue
-                    check_type_id = VERIFILE_CHECK_MAP.get(vc.check_type, "")
+                    check_type_id = _verifile_resolve_check_id(vc.check_type, in_scotland)
                     if check_type_id and check_type_id in result.get("check_statuses", {}):
                         new_status = result["check_statuses"][check_type_id]
                         vc.status = new_status
@@ -19445,8 +19539,8 @@ def action_skip_stage(app_id):
         # Vetting gate: block skip to post-vetting stages unless all checks done
         if target_stage in ("Ready to Contract", "Contract Sent", "Placed"):
             _ALL_CHECKS = [
-                "Right to Work", "Identity Verification", "Address History", "DBS Check",
-                "Employment History", "References", "Qualifications", "Professional Registration",
+                "Right to Work", "Identity Verification", "DBS Check",
+                "References", "Qualifications", "Professional Registration",
                 "Credit Check", "Directorship / Disqualification", "Sanctions / PEP", "Social Media Review"
             ]
             _checks = s.scalars(select(VettingCheck).where(VettingCheck.candidate_id == appn.candidate_id)).all()
@@ -20039,8 +20133,8 @@ def start_vetting_with_email(cand_id):
                 return redirect(url_for("candidate_profile", cand_id=cand_id))
 
             DEFAULT_VETTING_CHECKS = [
-                "Right to Work", "Identity Verification", "Address History", "DBS Check",
-                "Employment History", "References", "Qualifications", "Professional Registration",
+                "Right to Work", "Identity Verification", "DBS Check",
+                "References", "Qualifications", "Professional Registration",
                 "Credit Check", "Directorship / Disqualification", "Sanctions / PEP", "Social Media Review"
             ]
             existing = {
@@ -20086,10 +20180,10 @@ def start_vetting_with_email(cand_id):
 def api_vetting_trigger(cand_id):
     """Start Full Vetting: initialise ALL vetting checks to In Progress for this candidate.
     Includes Verifile API submission. Also starts referencing if not already started.
-    Uses engagement-specific vetting requirements if available, otherwise defaults to all 12 checks."""
+    Uses engagement-specific vetting requirements if available, otherwise defaults to all checks."""
     DEFAULT_VETTING_CHECKS = [
-        "Right to Work", "Identity Verification", "Address History", "DBS Check",
-        "Employment History", "References", "Qualifications", "Professional Registration",
+        "Right to Work", "Identity Verification", "DBS Check",
+        "References", "Qualifications", "Professional Registration",
         "Credit Check", "Directorship / Disqualification", "Sanctions / PEP", "Social Media Review"
     ]
     with Session(engine) as s:
@@ -22249,7 +22343,7 @@ def candidate_profile(cand_id: int):
     - Profile sidebar (status, location, rate, CV)
     - Tags section with Retag from CV
     - Contract section with Issue Contract button
-    - 12-item Vetting Checks grid
+    - Vetting Checks grid
     - Vetting Progress Summary
     """
     # Optional context passed when arriving from engagement lists
@@ -22261,13 +22355,12 @@ def candidate_profile(cand_id: int):
         "interview_at": request.args.get("interview_at"),
     }
 
-    # 12 vetting check types per wireframe
+    # Req 26 — Employment History (covered by the References flow) and
+    # Address History were retired as standalone vetting checks.
     VETTING_CHECK_TYPES = [
         "Right to Work",
         "Identity Verification",
-        "Address History",
         "DBS Check",
-        "Employment History",
         "References",
         "Qualifications",
         "Professional Registration",
@@ -22417,8 +22510,8 @@ def candidate_profile(cand_id: int):
 
         # Vetting expiry config (needed for check display below)
         _DEFAULT_EXPIRY = {
-            "Right to Work": 12, "Identity Verification": 36, "Address History": 36,
-            "DBS Check": 12, "Employment History": 36, "References": 36,
+            "Right to Work": 12, "Identity Verification": 36,
+            "DBS Check": 12, "References": 36,
             "Qualifications": 0, "Professional Registration": 12,
             "Credit Check": 12, "Directorship / Disqualification": 12,
             "Sanctions / PEP": 12, "Social Media Review": 6,
@@ -22433,13 +22526,18 @@ def candidate_profile(cand_id: int):
         except Exception:
             pass
 
-        # Build combined vetting requirements from engagement + job
+        # Build combined vetting requirements from engagement + job.
+        # Req 26 — drop any retired check types still stored in older
+        # engagement/job vetting_requirements JSON so they cannot reappear.
         required_vetting_checks = set()
         if engagement and engagement.vetting_requirements:
             required_vetting_checks.update(from_json_safe(engagement.vetting_requirements))
         if job and getattr(job, 'vetting_requirements', None):
             required_vetting_checks.update(from_json_safe(job.vetting_requirements))
-        required_vetting_checks = sorted(required_vetting_checks)
+        required_vetting_checks = sorted(
+            c for c in required_vetting_checks
+            if c not in ("Employment History", "Address History")
+        )
 
         # Engagements + roles the candidate has applied to (any status, deduped).
         # The Contract tile selector and "Applied For" panel use only these — a
@@ -22608,6 +22706,11 @@ def candidate_profile(cand_id: int):
                         "verifile_confirmed": getattr(check, 'verifile_confirmed', False) or False,
                         "verifile_confirmed_at": getattr(check, 'verifile_confirmed_at', None),
                         "verifile_result": getattr(check, 'verifile_result', None) or "",
+                        # Req 27 — credit-check address review flag + addresses
+                        "credit_address_review": (
+                            _verifile_credit_address_review(getattr(check, 'external_result', None))
+                            if check_type == "Credit Check" else None
+                        ),
                     })
                 else:
                     # Create a placeholder for display
@@ -22631,6 +22734,7 @@ def candidate_profile(cand_id: int):
                         "referral_approved_by_name": "",
                         "referral_approved_at": None,
                         "missing_data": _missing_for_check(check_type),
+                        "credit_address_review": None,
                     })
             
             # Enrich vetting cards with portal-side context so the recruiter
@@ -23678,8 +23782,8 @@ def candidate_add_vetting_check(cand_id: int):
     """Add a new VettingCheck row for a candidate (only if it doesn't already exist)."""
     check_type = request.form.get("check_type", "").strip()
     ALL_VETTING_CHECKS = [
-        "Right to Work", "Identity Verification", "Address History", "DBS Check",
-        "Employment History", "References", "Qualifications", "Professional Registration",
+        "Right to Work", "Identity Verification", "DBS Check",
+        "References", "Qualifications", "Professional Registration",
         "Credit Check", "Directorship / Disqualification", "Sanctions / PEP", "Social Media Review"
     ]
     if not check_type or check_type not in ALL_VETTING_CHECKS:
@@ -23728,8 +23832,8 @@ def update_vetting_check(cand_id: int):
     
     # All vetting check types
     ALL_VETTING_CHECKS = [
-        "Right to Work", "Identity Verification", "Address History", "DBS Check",
-        "Employment History", "References", "Qualifications", "Professional Registration",
+        "Right to Work", "Identity Verification", "DBS Check",
+        "References", "Qualifications", "Professional Registration",
         "Credit Check", "Directorship / Disqualification", "Sanctions / PEP", "Social Media Review"
     ]
     
@@ -23930,14 +24034,14 @@ def manual_vetting_entry(cand_id: int):
 # =========================================================================
 
 ALL_VETTING_CHECK_TYPES = [
-    "Right to Work", "Identity Verification", "Address History", "DBS Check",
-    "Employment History", "References", "Qualifications", "Professional Registration",
+    "Right to Work", "Identity Verification", "DBS Check",
+    "References", "Qualifications", "Professional Registration",
     "Credit Check", "Directorship / Disqualification", "Sanctions / PEP", "Social Media Review"
 ]
 
 def _auto_create_vetting_checks(session, candidate_id: int, engagement_id: int = None):
     """
-    Auto-create the 12 VettingCheck records for a candidate with status
+    Auto-create the VettingCheck records for a candidate with status
     'WAITING FOR ASSOCIATE'. These remain dormant until the 'Start Vetting'
     button is pressed by staff, which changes status to 'NOT STARTED' and
     triggers the API calls and emails.
@@ -24035,11 +24139,11 @@ def _auto_trigger_vetting(session, candidate_id: int, job_id: int = None):
 def start_vetting(cand_id: int):
     """
     Batch 2.2: Send vetting start email to candidate when vetting is triggered.
-    Creates initial VettingCheck records for all 12 check types.
+    Creates initial VettingCheck records for all check types.
     """
     ALL_VETTING_CHECKS = [
-        "Right to Work", "Identity Verification", "Address History", "DBS Check",
-        "Employment History", "References", "Qualifications", "Professional Registration",
+        "Right to Work", "Identity Verification", "DBS Check",
+        "References", "Qualifications", "Professional Registration",
         "Credit Check", "Directorship / Disqualification", "Sanctions / PEP", "Social Media Review"
     ]
     with Session(engine) as s:
@@ -25264,8 +25368,8 @@ def _should_remove_from_grid(candidate, application, vetting_checks):
     all_complete = all(
         check_statuses.get(ct, "NOT STARTED") in ("COMPLETE", "N/A", "QC COMPLETE", "REFERRAL APPROVED")
         for ct in [
-            "Right to Work", "Identity Verification", "Address History", "DBS Check",
-            "Employment History", "References", "Qualifications", "Professional Registration",
+            "Right to Work", "Identity Verification", "DBS Check",
+            "References", "Qualifications", "Professional Registration",
             "Credit Check", "Directorship / Disqualification", "Sanctions / PEP", "Social Media Review"
         ]
     )
@@ -25954,8 +26058,8 @@ def _engagement_dashboard_inner(eng_id):
                 select(Application.candidate_id).where(Application.id.in_(app_id_list))
             ).scalars().all()))
             ALL_CHECK_TYPES = [
-                "Right to Work", "Identity Verification", "Address History", "DBS Check",
-                "Employment History", "References", "Qualifications", "Professional Registration",
+                "Right to Work", "Identity Verification", "DBS Check",
+                "References", "Qualifications", "Professional Registration",
                 "Credit Check", "Directorship / Disqualification", "Sanctions / PEP", "Social Media Review"
             ]
             for cid in vc_cand_ids:
@@ -26248,8 +26352,8 @@ def _engagement_dashboard_inner(eng_id):
         if app_id_list:
             _VC_DONE = {"COMPLETE", "N/A", "REFERRAL APPROVED", "QC COMPLETE"}
             _ALL_CHECK_TYPES = [
-                "Right to Work", "Identity Verification", "Address History", "DBS Check",
-                "Employment History", "References", "Qualifications", "Professional Registration",
+                "Right to Work", "Identity Verification", "DBS Check",
+                "References", "Qualifications", "Professional Registration",
                 "Credit Check", "Directorship / Disqualification", "Sanctions / PEP", "Social Media Review",
             ]
             cand_id_to_job_title = {}
@@ -28969,6 +29073,9 @@ Optimus Compliance Team"""
                 select(EmailTemplate).where(EmailTemplate.name == "interview_invitation")
             )
             if not email_template_interview:
+                # Body ends at the sign-off — send_email() appends the
+                # branded HTML signature, so no plain-text signature here
+                # (that produced the duplicated signature in Req 8 feedback).
                 default_interview_body = """Hi {associate_name},
 
 I hope you are well. I am pleased to confirm that {client_name} would like to invite you to interview for the {role} role. Please find the details below.
@@ -28982,7 +29089,6 @@ Client Contact
 Name: {client_contact_name}
 Role: {client_role}
 Company: {company_name}
-Website: {company_website}
 
 Technology
 
@@ -28994,7 +29100,7 @@ This interview will be conducted via Microsoft Teams; a meeting link will be inc
 
 Research
 
-We strongly recommend taking some time to familiarise yourself with the company ahead of the interview. Their website is a great starting point: {company_website}
+We strongly recommend taking some time to familiarise yourself with the company ahead of the interview. Their website and recent news coverage are a great starting point.
 
 Documents
 
@@ -29007,11 +29113,7 @@ Please review both documents so you are aligned on what the client has seen.
 
 Please respond to this e-mail to confirm receipt. If you have any questions in the meantime, or if anything changes, please do not hesitate to get in touch.
 
-We wish you the very best of luck.
-
-71-75 Shelton Street | London | WC2H 9JQ
-associates@optimussolutions.co.uk
-Optimus - Financial Services Resourcing Specialists"""
+We wish you the very best of luck."""
                 email_template_interview = EmailTemplate(
                     name="interview_invitation",
                     subject="Interview Confirmation: {date} at {time}",
@@ -29023,6 +29125,29 @@ Optimus - Financial Services Resourcing Specialists"""
                 email_template_interview = s7.scalar(
                     select(EmailTemplate).where(EmailTemplate.name == "interview_invitation")
                 )
+            else:
+                # Req 8 self-heal — strip the duplicated plain-text signature
+                # and the {company_website} placeholder (no data source) from
+                # an interview_invitation row seeded before this fix. Safe and
+                # idempotent: only rewrites when one of those patterns is found.
+                _b = email_template_interview.body or ""
+                _new_b = _b
+                _old_sig = (
+                    "\n\n71-75 Shelton Street | London | WC2H 9JQ\n"
+                    "associates@optimussolutions.co.uk\n"
+                    "Optimus - Financial Services Resourcing Specialists"
+                )
+                if _old_sig in _new_b:
+                    _new_b = _new_b.replace(_old_sig, "")
+                _new_b = _new_b.replace("\nWebsite: {company_website}", "")
+                _new_b = _new_b.replace(
+                    "Their website is a great starting point: {company_website}",
+                    "Their website and recent news coverage are a great starting point.",
+                )
+                _new_b = _new_b.replace("{company_website}", "")
+                if _new_b != _b:
+                    email_template_interview.body = _new_b
+                    s7.commit()
             # Detach-safe: copy values
             email_template_interview = {
                 "id": email_template_interview.id,
@@ -29261,8 +29386,8 @@ def vetting_profile_delete(vp_id):
 def vetting_expiry_save():
     """Save vetting check expiry periods (months per check type)."""
     VETTING_CHECK_TYPES = [
-        "Right to Work", "Identity Verification", "Address History", "DBS Check",
-        "Employment History", "References", "Qualifications", "Professional Registration",
+        "Right to Work", "Identity Verification", "DBS Check",
+        "References", "Qualifications", "Professional Registration",
         "Credit Check", "Directorship / Disqualification", "Sanctions / PEP", "Social Media Review",
     ]
     expiry_map = {}
@@ -31179,11 +31304,6 @@ CHECK_DATA_REQUIREMENTS = {
         "profile_fields": ["dob"],
         "label": "Social Media Review requires: Full name, Gender, DOB"
     },
-    "Employment History": {
-        "candidate_fields": ["name"],
-        "requires_employment_history": True,
-        "label": "Employment History check requires: Employment history records"
-    },
     "References": {
         "candidate_fields": ["name"],
         "requires_references": True,
@@ -31198,11 +31318,6 @@ CHECK_DATA_REQUIREMENTS = {
         "candidate_fields": ["name"],
         "requires_professional_registration": True,
         "label": "Professional Registration check requires: Professional registration details noted in profile or vetting notes"
-    },
-    "Address History": {
-        "candidate_fields": ["name"],
-        "requires_address_history": True,
-        "label": "Address History check requires: 5-year address history records"
     },
     "Directorship / Disqualification": {
         "candidate_fields": ["name"],

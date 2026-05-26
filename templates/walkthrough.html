@@ -290,16 +290,16 @@
           <tr><td>Page</td><td>the <strong>Configuration</strong> page &rarr; Vetting Profiles section</td></tr>
           <tr><td>Purpose</td><td>Pre-saved sets of vetting checks that can be applied to projects with one click instead of ticking individual checks each time.</td></tr>
           <tr><td>Action</td><td>Click <strong>"Add Vetting Profile"</strong> &rarr; enter a name (e.g. "Standard FS", "Enhanced DBS") &rarr; tick the checks this profile requires &rarr; click <strong>Save</strong>.</td></tr>
-          <tr><td>Available Checks</td><td>Right to Work, Identity Verification, Address History, DBS Check, Employment History, References, Qualifications, Professional Registration, Credit Check, Directorship / Disqualification, Sanctions / PEP, Social Media Review (12 total)</td></tr>
+          <tr><td>Available Checks</td><td>Right to Work, Identity Verification, DBS Check, References, Qualifications, Professional Registration, Credit Check, Directorship / Disqualification, Sanctions / PEP, Social Media Review (10 total)</td></tr>
         </table>
 
         <div class="wt-sub-heading">Vetting Expiry Periods</div>
-        <p>Separate collapsible section on the Configuration page. Set the expiry period in <strong>months</strong> for each of the 12 check types. When a check is completed, the system calculates the expiry date from the completion date plus this period.</p>
+        <p>Separate collapsible section on the Configuration page. Set the expiry period in <strong>months</strong> for each of the 10 check types. When a check is completed, the system calculates the expiry date from the completion date plus this period.</p>
         <ul class="wt-field-list">
           <li><span class="field-name">0 months</span> &mdash; check never expires (e.g. Qualifications)</li>
           <li><span class="field-name">12 months</span> &mdash; typical for DBS, Credit Check, Sanctions/PEP</li>
           <li><span class="field-name">6 months</span> &mdash; typical for Social Media Review</li>
-          <li><span class="field-name">36 months</span> &mdash; typical for Identity Verification, Address History</li>
+          <li><span class="field-name">36 months</span> &mdash; typical for Identity Verification</li>
         </ul>
         <p>Expired checks are flagged in red on the candidate profile with a warning icon. Checks approaching expiry (within 40 days) are flagged as <strong>"Expiring in X days"</strong> on the Placements page.</p>
       </div>
@@ -505,9 +505,7 @@
         <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.25rem 1rem; margin: 0.5rem 0 0.75rem; font-size: 0.8rem;">
           <span><i class="far fa-check-square me-1 text-primary"></i> Right to Work</span>
           <span><i class="far fa-check-square me-1 text-primary"></i> Identity Verification</span>
-          <span><i class="far fa-check-square me-1 text-primary"></i> Address History</span>
           <span><i class="far fa-check-square me-1 text-primary"></i> DBS Check</span>
-          <span><i class="far fa-check-square me-1 text-primary"></i> Employment History</span>
           <span><i class="far fa-check-square me-1 text-primary"></i> References</span>
           <span><i class="far fa-check-square me-1 text-primary"></i> Qualifications</span>
           <span><i class="far fa-check-square me-1 text-primary"></i> Professional Registration</span>
@@ -1635,7 +1633,7 @@
           <tr><td>Declaration</td><td><strong>/portal/declaration</strong></td><td>Discloses any criminal convictions, CCJs, IVAs, bankruptcy, or other relevant history</td><td>Blue &rarr; Green</td></tr>
           <tr><td>Secondary Job Declaration</td><td><strong>/portal/secondary-job-declaration</strong></td><td>Confirms whether the associate has any secondary employment that may conflict</td><td>Blue &rarr; Green</td></tr>
           <tr><td>Employment Reference Declaration</td><td><strong>/portal/employment-reference-declaration</strong></td><td>Authorises Optimus to contact previous employers for references. <strong>Must be signed before referencing can begin (gate).</strong></td><td>Blue &rarr; Green</td></tr>
-          <tr><td>Employment History</td><td><strong>/portal/references/employment</strong></td><td>Complete 3-year employment history (see Associate Step 3)</td><td>Blue &rarr; Green</td></tr>
+          <tr><td>Employment History</td><td><strong>/portal/references/employment</strong></td><td>Complete 5-year employment history (see Associate Step 3)</td><td>Blue &rarr; Green</td></tr>
           <tr><td>Documents</td><td><strong>/portal/documents</strong></td><td>Upload required documents (ID, proof of address, certificates)</td><td>Blue &rarr; Green</td></tr>
         </table>
 

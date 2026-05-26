@@ -1752,9 +1752,7 @@
                       <option value="">Select check type...</option>
                       <option value="Right to Work">Right to Work</option>
                       <option value="Identity Verification">Identity Verification</option>
-                      <option value="Address History">Address History</option>
                       <option value="DBS Check">DBS Check</option>
-                      <option value="Employment History">Employment History</option>
                       <option value="References">References</option>
                       <option value="Qualifications">Qualifications</option>
                       <option value="Professional Registration">Professional Registration</option>
@@ -1806,9 +1804,7 @@
         {% set checks = [
           ('rtw', 'Right to Work', 'fa-passport', 'Immigration status, doc type/number, expiry, share code, restrictions', vetting.rtw_status if vetting else 'not_started'),
           ('idv', 'Identity Verification', 'fa-id-card', 'Names incl. aliases, ID doc details, selfie/liveness, provider txn ID', vetting.idv_status if vetting else 'not_started'),
-          ('address', 'Address History', 'fa-home', 'Previous addresses, dates, country, overseas flags, gap explanations', vetting.addr_status if vetting else 'not_started'),
           ('dbs', 'DBS Check', 'fa-shield-alt', 'DBS level, barred list, consent, certificate no/date, outcome', vetting.dbs_status if vetting else 'not_started'),
-          ('employment', 'Employment History', 'fa-briefcase', 'Employer, title, dates, contact, gap reasons, overseas flags', vetting.emp_status if vetting else 'not_started'),
           ('references', 'References', 'fa-user-friends', 'Referee details, relationship, questions, dates, responses', vetting.ref_status if vetting else 'not_started'),
           ('qualifications', 'Qualifications', 'fa-graduation-cap', 'Institution, qualification, subject, grade, award date, ref no', vetting.qual_status if vetting else 'not_started'),
           ('professional', 'Professional Registration', 'fa-certificate', 'Regulator, reg no, status, restrictions, expiry', vetting.prof_status if vetting else 'not_started'),
