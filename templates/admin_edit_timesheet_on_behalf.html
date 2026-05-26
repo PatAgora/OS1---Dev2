@@ -230,6 +230,43 @@
 
 <script>
 (function() {
+    // ---- Weekend / bank-holiday cell shading (mirrors Associate Portal) ----
+    // Day rows (Standard / Holiday / Sickness) render as <select>; the
+    // Overtime row renders as <input>. The selector grabs both element
+    // types so the whole column is tinted, not just the OT row.
+    var BANK_HOLIDAYS = {{ bank_holidays|tojson if bank_holidays else '[]' }};
+    var BH_SET = new Set(BANK_HOLIDAYS);
+    var NWD_BG = '#e5e7eb';      // grey-200
+    var NWD_FG = '#6b7280';      // grey-500
+    function _isWeekendDate(yyyymmdd) {
+        var d = new Date(yyyymmdd + "T00:00:00");
+        var dow = d.getDay();
+        return dow === 0 || dow === 6;
+    }
+    function _isBankHoliday(yyyymmdd) { return BH_SET.has(yyyymmdd); }
+    function _applyNwd(cell, title) {
+        cell.style.background = NWD_BG;
+        cell.title = title;
+        cell.querySelectorAll('input, select').forEach(function(c) {
+            c.style.background = NWD_BG;
+            c.style.color = NWD_FG;
+            c.style.borderColor = '#d1d5db';
+        });
+    }
+    document.querySelectorAll('input[name^="entry_"], select[name^="entry_"]').forEach(function(el) {
+        var m = el.name.match(/^entry_(\d{4}-\d{2}-\d{2})_/);
+        if (!m) return;
+        var iso = m[1];
+        var cell = el.closest('td') || el.parentElement;
+        if (!cell) return;
+        if (_isBankHoliday(iso)) {
+            _applyNwd(cell, 'Bank holiday — non-working day.');
+        } else if (_isWeekendDate(iso)) {
+            _applyNwd(cell, 'Weekend — non-working day.');
+        }
+    });
+
+    // ---- Expense form: mileage swap + edit-in-place ----
     var HMRC_RATE = {{ hmrc_mileage_rate|tojson }};
     var sel  = document.getElementById('adminExpCategorySelect');
     var amtW = document.getElementById('adminExpAmountWrapper');

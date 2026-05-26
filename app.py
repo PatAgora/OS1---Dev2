@@ -2433,12 +2433,30 @@ def admin_edit_timesheet_on_behalf(ts_id):
     except Exception:
         hmrc_mileage_rate = 0.45
 
+    # UK bank-holiday dates for the period (same list the Associate
+    # Portal uses to grey out non-working cells). Driven by the
+    # bank_holiday_dates seed table; falls back to [] if missing so
+    # the page still renders.
+    bank_holidays = []
+    try:
+        with Session(engine) as s3:
+            bh_rows = s3.execute(text(
+                "SELECT date FROM bank_holiday_dates WHERE region = :r ORDER BY date"
+            ).bindparams(r='england-and-wales')).all()
+            bank_holidays = [
+                r[0].isoformat() if hasattr(r[0], 'isoformat') else str(r[0])
+                for r in bh_rows
+            ]
+    except Exception:
+        pass
+
     return render_template("admin_edit_timesheet_on_behalf.html",
                            ts=ts, cand=cand, eng=eng, week=week, entries=entries,
                            time_types=["Standard Time", "Holiday", "Sickness", "Overtime"],
                            expenses=expenses_list,
                            expense_categories=expense_categories_list,
-                           hmrc_mileage_rate=hmrc_mileage_rate)
+                           hmrc_mileage_rate=hmrc_mileage_rate,
+                           bank_holidays=bank_holidays)
 
 
 # ----- Admin expense CRUD on a specific timesheet -----
