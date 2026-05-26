@@ -366,7 +366,11 @@
                     </td>
                     <td>{{ t.submitted_at.strftime('%d/%m %H:%M') if t.submitted_at else '—' }}</td>
                     <td class="text-end" style="white-space: nowrap;">
+                        {% if t.ts_type == 'Adjustment' %}
+                        <a href="{{ url_for('admin_edit_adjustment', ts_id=t.id) }}" class="btn btn-sm btn-outline-warning me-1">View / Amend</a>
+                        {% else %}
                         <a href="{{ url_for('admin_edit_timesheet_on_behalf', ts_id=t.id) }}" class="btn btn-sm btn-outline-primary me-1">View / Amend</a>
+                        {% endif %}
                         {% if (t.status or '')|lower == 'submitted' %}
                         <form method="POST" action="{{ url_for('admin_ts_approve', ts_id=t.id) }}" class="d-inline"
                               onsubmit="return confirm('Approve TS-{{ '%04d' % t.id }} for {{ t.associate_name }}?');">

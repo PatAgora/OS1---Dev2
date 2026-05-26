@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Create Adjustment · OS1{% endblock %}
+{% block title %}{% if edit_mode %}Edit Adjustment{% else %}Create Adjustment{% endif %} · OS1{% endblock %}
 
 {% block content %}
 <div class="container-fluid px-4 pt-3 pb-4">
@@ -8,9 +8,9 @@
 <div class="page-header mb-4">
     <div class="d-flex justify-content-between align-items-center">
         <div>
-            <h1 style="color:#fff;"><i class="fas fa-exchange-alt me-2"></i>Create Adjustment Timesheet</h1>
+            <h1 style="color:#fff;"><i class="fas fa-exchange-alt me-2"></i>{% if edit_mode %}Edit Adjustment Timesheet{% else %}Create Adjustment Timesheet{% endif %}</h1>
             <p style="color:rgba(255,255,255,0.8);" class="mb-0">
-                Against TS-{{ '%04d' % original.id }} — {{ cand.name if cand else '—' }}.
+                {% if edit_mode %}Editing TS-{{ '%04d' % adjustment.id }} (Adjustment vs TS-{{ '%04d' % original.id }}){% else %}Against TS-{{ '%04d' % original.id }}{% endif %} — {{ cand.name if cand else '—' }}.
                 Day delta feeds the next invoice as a credit or debit line.
             </p>
         </div>
@@ -51,17 +51,19 @@
                 <div class="col-md-3">
                     <label class="form-label">Day delta</label>
                     <input type="number" name="day_delta" step="0.5" class="form-control"
+                           value="{{ existing_delta if edit_mode and existing_delta is not none else '' }}"
                            placeholder="e.g. -1.0 or +0.5" required>
                 </div>
                 <div class="col-md-7">
                     <label class="form-label">Reason</label>
                     <input type="text" name="reason" class="form-control"
+                           value="{{ existing_reason if edit_mode else '' }}"
                            placeholder="e.g. Original timesheet incorrectly recorded 5 days; actual was 4">
                 </div>
                 <div class="col-md-2">
                     <button type="submit" class="btn btn-warning w-100"
-                            onclick="return confirm('Create adjustment timesheet?');">
-                        <i class="fas fa-save me-1"></i> Create
+                            onclick="return confirm('{% if edit_mode %}Save changes to this adjustment?{% else %}Create adjustment timesheet?{% endif %}');">
+                        <i class="fas fa-save me-1"></i> {% if edit_mode %}Save{% else %}Create{% endif %}
                     </button>
                 </div>
             </div>
@@ -72,12 +74,14 @@
     </div>
 </div>
 
+{% if not edit_mode %}
 <div class="alert alert-info mt-4 small">
     <i class="fas fa-info-circle me-1"></i>
     The adjustment lands as a new <strong>Approved</strong> Adjustment timesheet
     linked to TS-{{ '%04d' % original.id }}. It will appear on the next invoice
-    generated for this engagement as a labelled line item (Phase 6/7 — IR 21-25).
+    generated for this engagement as a labelled line item.
 </div>
+{% endif %}
 
 </div>
 {% endblock %}

@@ -2321,6 +2321,75 @@ def admin_create_adjustment(ts_id):
                            original=original, cand=cand)
 
 
+@app.route("/admin/timesheets/<int:ts_id>/edit-adjustment", methods=["GET", "POST"])
+@login_required
+def admin_edit_adjustment(ts_id):
+    """Edit an existing Adjustment timesheet — change the day_delta and
+    the reason. Refuses on a non-Adjustment row so an admin can't
+    accidentally rewrite a Standard timesheet here (Standard rows use
+    edit-on-behalf for the full Mon-Sun grid). Audit-logged."""
+    if (current_user.role or "").lower() != "admin":
+        flash("Admin access required.", "danger")
+        return redirect(url_for("admin_timesheets"))
+    with Session(engine) as s:
+        adj = s.get(Timesheet, ts_id)
+        if not adj:
+            abort(404)
+        if (adj.timesheet_type or "Standard") != "Adjustment":
+            flash("That timesheet isn't an Adjustment — use Edit on behalf instead.", "warning")
+            return redirect(url_for("admin_edit_timesheet_on_behalf", ts_id=ts_id))
+        if request.method == "POST":
+            try:
+                delta = float(request.form.get("day_delta") or 0)
+            except ValueError:
+                delta = 0
+            reason = (request.form.get("reason") or "").strip()
+            if delta == 0:
+                flash("Day delta must be non-zero (positive or negative).", "warning")
+                return redirect(url_for("admin_edit_adjustment", ts_id=ts_id))
+            old_delta = adj.billable_days
+            old_notes = adj.notes or ""
+            adj.billable_days = delta
+            orig_id = adj.originating_timesheet_id or "—"
+            adj.notes = f"Adjustment vs TS #{orig_id}: {reason or '(no reason given)'}"
+            s.commit()
+            try:
+                log_audit_event(
+                    "update", "timesheet",
+                    f"Adjustment timesheet TS#{ts_id} edited (delta {old_delta} -> {delta})",
+                    "timesheet", ts_id,
+                    {"old_delta": old_delta, "new_delta": delta,
+                     "old_notes": old_notes, "new_reason": reason},
+                )
+            except Exception:
+                pass
+            flash(f"Adjustment timesheet #{ts_id} updated (delta {delta:+.2f} days).", "success")
+            return redirect(url_for("admin_timesheets"))
+        # GET — render the same template in edit mode. Pull the reason
+        # back out of the notes prefix the create flow wrote.
+        cand = s.execute(text("SELECT id, name FROM candidates WHERE id = :id")
+                         .bindparams(id=adj.user_id)).first()
+        # Original timesheet for the header — falls back to the
+        # adjustment itself when the link has been broken.
+        original = None
+        if adj.originating_timesheet_id:
+            original = s.get(Timesheet, adj.originating_timesheet_id) or adj
+        else:
+            original = adj
+        # Strip the standard "Adjustment vs TS #N: " prefix to surface
+        # the reason on its own in the form.
+        existing_reason = adj.notes or ""
+        import re as _re
+        existing_reason = _re.sub(r"^Adjustment vs TS #[^:]+:\s*", "", existing_reason).strip()
+        if existing_reason == "(no reason given)":
+            existing_reason = ""
+    return render_template("admin_create_adjustment.html",
+                           original=original, cand=cand,
+                           edit_mode=True, adjustment=adj,
+                           existing_delta=adj.billable_days,
+                           existing_reason=existing_reason)
+
+
 @app.route("/admin/timesheets/<int:ts_id>/edit-on-behalf", methods=["GET", "POST"])
 @login_required
 def admin_edit_timesheet_on_behalf(ts_id):
