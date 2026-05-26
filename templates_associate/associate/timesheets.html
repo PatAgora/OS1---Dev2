@@ -33,27 +33,27 @@
                 </div>
                 <div class="col-md-4">
                     <label class="form-label">Week Starting (Monday)</label>
-                    {# TS 3 — the picker is constrained to the WC window
-                       (two prior WCs through next WC) on the client side;
-                       the server-side guard in _is_wc_in_window enforces
-                       the same range on submit. Non-Monday dates are
-                       rejected server-side; the helper text below tells
-                       the Associate what's selectable. #}
+                    {# TS 3 — picker constrained to the WC window (two
+                       prior WCs through next WC). The server-side guard
+                       in _is_wc_in_window enforces the same range on
+                       submit; an OS1 recruiter can create a timesheet
+                       outside this window via /admin/timesheets >
+                       Edit on behalf. #}
                     <input type="date" name="week_start" id="wc-picker"
                            class="form-control"
                            min="{{ wc_window_min }}"
                            max="{{ wc_window_max }}"
                            value="{{ wc_window_default }}"
                            required>
-                    <small class="form-text text-muted">
-                        Select a Monday between {{ wc_window_min }} and {{ wc_window_max }} (two prior WCs, current WC, or next WC).
-                    </small>
                 </div>
                 <div class="col-md-3">
                     <button type="submit" class="btn btn-primary w-100">
                         <i class="fas fa-plus me-1"></i> Create Timesheet
                     </button>
                 </div>
+            </div>
+            <div class="mt-2 text-muted small" style="white-space: nowrap;">
+                If you require any dates that are not shown in the Week Starting calendar then contact Optimus.
             </div>
         </form>
         {% else %}
