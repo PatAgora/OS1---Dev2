@@ -1648,7 +1648,10 @@ def admin_users():
 @app.route("/admin/approvals")
 @login_required
 def admin_approvals():
-    """Approvals management page — shows submitted timesheets for review."""
+    """Leave Requests page — record and approve Associate leave (holiday,
+    sickness, other). Timesheet approval lives in the Approver Portal
+    (/approver) and the all-engagements admin list (/admin/timesheets);
+    this page is leave-only."""
     try:
         return _admin_approvals_inner()
     except Exception as exc:
@@ -1658,151 +1661,17 @@ def admin_approvals():
 
 def _admin_approvals_inner():
     with Session(engine) as s:
-        Timesheet = globals().get("Timesheet")
-        if not Timesheet:
-            try:
-                from app import Timesheet
-            except Exception:
-                pass
-
-        timesheets_data = []
-        pending_count = 0
-        approved_count = 0
-        rejected_count = 0
-
-        if Timesheet:
-            all_ts = s.execute(
-                select(Timesheet, Candidate)
-                .outerjoin(Candidate, Candidate.id == Timesheet.user_id)
-                .where(Timesheet.status.in_(["Submitted", "Approved", "Rejected"]))
-                .order_by(Timesheet.submitted_at.desc())
-            ).all()
-
-            # Load entry/expense models from portal
-            try:
-                from associate_portal import _portal_model
-                TSEntry = _portal_model("TimesheetEntry")
-                TSExpense = _portal_model("TimesheetExpense")
-            except Exception:
-                TSEntry = TSExpense = None
-
-            for ts, cand in all_ts:
-                # Build the week grid the same way the associate portal does
-                # so the approvals view mirrors what the associate submitted.
-                week_start = getattr(ts, "week_start", None) or (
-                    ts.period_start.date() if ts.period_start else None
-                )
-                week_days = []
-                if week_start:
-                    for i in range(7):
-                        d = week_start + datetime.timedelta(days=i)
-                        week_days.append({
-                            "date": d.strftime("%Y-%m-%d"),
-                            "short": d.strftime("%a"),
-                            "dom": d.strftime("%d"),
-                        })
-
-                # entries_grid[(YYYY-MM-DD, time_type)] = value
-                entries_grid = {}
-                ot_multipliers = {}  # YYYY-MM-DD -> multiplier (only days with OT)
-                time_types_used = []
-                if TSEntry:
-                    try:
-                        rows = s.query(TSEntry).filter_by(timesheet_id=ts.id).all()
-                        for e in rows:
-                            v = float(e.value or 0)
-                            if v <= 0:
-                                continue
-                            d_iso = e.entry_date.strftime("%Y-%m-%d") if e.entry_date else ""
-                            tt = e.time_type or ""
-                            if not d_iso or not tt:
-                                continue
-                            if tt == "OT Multiplier":
-                                ot_multipliers[d_iso] = v
-                            else:
-                                entries_grid[(d_iso, tt)] = v
-                                if tt not in time_types_used:
-                                    time_types_used.append(tt)
-                    except Exception:
-                        pass
-
-                # Sort time types in a sensible order: Standard Time first,
-                # then Overtime, then everything else as encountered.
-                preferred_order = ["Standard Time", "Overtime", "Holiday", "Sickness", "Unplanned Absence"]
-                time_types_used.sort(
-                    key=lambda t: preferred_order.index(t) if t in preferred_order else 999,
-                )
-
-                # Show OT Multiplier row only if there are OT hours on any day
-                has_ot = any("overtime" in tt.lower() for tt in time_types_used)
-
-                expenses = []
-                if TSExpense:
-                    try:
-                        for exp in s.query(TSExpense).filter_by(timesheet_id=ts.id).all():
-                            receipt_id = getattr(exp, "receipt_doc_id", None)
-                            receipt_name = ""
-                            if receipt_id:
-                                try:
-                                    rdoc = s.get(Document, receipt_id)
-                                    if rdoc:
-                                        receipt_name = (
-                                            getattr(rdoc, "original_name", "")
-                                            or os.path.basename(getattr(rdoc, "filename", "") or "")
-                                            or "receipt"
-                                        )
-                                except Exception:
-                                    pass
-                            exp_date = getattr(exp, "entry_date", None) or getattr(exp, "created_at", None)
-                            expenses.append({
-                                "id": exp.id,
-                                "date": exp_date.strftime("%d/%m/%Y") if exp_date else "",
-                                "type": exp.expense_type or "Other",
-                                "description": getattr(exp, "description", "") or "",
-                                "amount": exp.amount or 0,
-                                "receipt_doc_id": receipt_id,
-                                "receipt_original_name": receipt_name,
-                            })
-                    except Exception:
-                        pass
-
-                timesheets_data.append({
-                    "id": ts.id,
-                    "associate_name": cand.name if cand else f"ID {ts.user_id}",
-                    "candidate_id": ts.user_id,
-                    "engagement_name": "",
-                    "week_ending": ts.period_end.strftime("%d/%m/%Y") if ts.period_end else "",
-                    "period": f"{ts.period_start.strftime('%d/%m') if ts.period_start else ''} – {ts.period_end.strftime('%d/%m/%Y') if ts.period_end else ''}",
-                    "total_days": ts.billable_days or 0,
-                    "total_hours": ts.billable_hours or 0,
-                    "total_amount": ts.grand_total or ts.total_amount or 0,
-                    "day_rate": getattr(ts, "day_rate", 0) or 0,
-                    "overtime_rate": getattr(ts, "overtime_rate", 0) or 0,
-                    "status": ts.status,
-                    "submitted_at": ts.submitted_at.strftime("%d/%m/%Y %H:%M") if ts.submitted_at else "",
-                    "week_days": week_days,
-                    "entries_grid": entries_grid,
-                    "ot_multipliers": ot_multipliers,
-                    "time_types_used": time_types_used,
-                    "has_ot": has_ot,
-                    "expenses": expenses,
-                })
-                if ts.status == "Submitted":
-                    pending_count += 1
-                elif ts.status == "Approved":
-                    approved_count += 1
-                elif ts.status == "Rejected":
-                    rejected_count += 1
-
-        # All candidates for the leave request form dropdown
+        # All candidates for the leave request form dropdown.
         all_candidates = s.scalars(
             select(Candidate).order_by(Candidate.name)
         ).all()
 
-    # Leave requests + reasons in separate session so a failed query
-    # doesn't poison the Postgres transaction for subsequent queries.
+    # Leave requests + reasons in separate session blocks so a failed
+    # query can't poison the Postgres transaction for the next one.
     leave_data = []
     leave_pending = 0
+    leave_approved = 0
+    leave_rejected = 0
     leave_reasons = []
     try:
         with Session(engine) as s2:
@@ -1812,6 +1681,7 @@ def _admin_approvals_inner():
                 .order_by(LeaveRequest.created_at.desc())
             ).all()
             for lr, cand in all_leave:
+                status = lr.status or "Pending"
                 leave_data.append({
                     "id": lr.id,
                     "associate_name": cand.name if cand else f"ID {lr.candidate_id}",
@@ -1820,11 +1690,15 @@ def _admin_approvals_inner():
                     "notice_start_date": lr.notice_start_date.strftime("%d/%m/%Y") if getattr(lr, "notice_start_date", None) else "—",
                     "notice_end_date": lr.notice_end_date.strftime("%d/%m/%Y") if getattr(lr, "notice_end_date", None) else "—",
                     "notes": lr.notes or "",
-                    "status": lr.status or "Pending",
+                    "status": status,
                     "created_by": getattr(lr, "created_by", "") or "",
                 })
-                if lr.status == "Pending":
+                if status == "Pending":
                     leave_pending += 1
+                elif status == "Approved":
+                    leave_approved += 1
+                elif status == "Rejected":
+                    leave_rejected += 1
     except Exception as _lr_exc:
         print(f"[APPROVALS] leave requests query failed: {_lr_exc}", flush=True)
 
@@ -1840,17 +1714,12 @@ def _admin_approvals_inner():
     except Exception as _lrr_exc:
         print(f"[APPROVALS] leave reasons query failed: {_lrr_exc}", flush=True)
 
-    print(f"[APPROVALS] leave_reasons={leave_reasons}, leave_data_count={len(leave_data)}", flush=True)
-
     return render_template("admin_approvals.html",
-                           timesheets=timesheets_data,
-                           pending_count=pending_count,
-                           approved_count=approved_count,
-                           rejected_count=rejected_count,
-                           total_count=len(timesheets_data),
-                           timesheet_pending=pending_count,
                            leave_requests=leave_data,
                            leave_pending=leave_pending,
+                           leave_approved=leave_approved,
+                           leave_rejected=leave_rejected,
+                           leave_total=len(leave_data),
                            all_candidates=all_candidates,
                            leave_reasons=leave_reasons)
 

@@ -452,8 +452,8 @@
           {% endif %}
           {% if view_exists('admin_approvals') %}
           <a href="{{ url_for('admin_approvals') }}"
-             class="{% if request.endpoint in ['admin_approvals', 'admin_timesheet_view'] %}active{% endif %}">
-            <i class="fas fa-check-double"></i><span>Approvals</span>
+             class="{% if request.endpoint == 'admin_approvals' %}active{% endif %}">
+            <i class="fas fa-calendar-minus"></i><span>Leave Requests</span>
           </a>
           {% endif %}
           {% if view_exists('admin_invoices') %}

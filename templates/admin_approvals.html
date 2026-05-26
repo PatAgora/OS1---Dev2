@@ -204,8 +204,8 @@
 
 <div class="container-fluid px-4 pt-3 pb-4">
 <div class="page-header">
-    <h1><i class="fas fa-check-double me-2"></i>Approvals</h1>
-    <p>Manage timesheets, expenses, and leave requests requiring approval</p>
+    <h1><i class="fas fa-calendar-minus me-2"></i>Leave Requests</h1>
+    <p>Record and approve Associate leave (holiday, sickness, other).</p>
 </div>
 
 <!-- Summary Cards -->
@@ -216,7 +216,7 @@
         </div>
         <div class="details">
             <h4>Pending</h4>
-            <div class="value">{{ pending_count|default(0) }}</div>
+            <div class="value">{{ leave_pending|default(0) }}</div>
         </div>
     </div>
     <div class="summary-card">
@@ -225,7 +225,7 @@
         </div>
         <div class="details">
             <h4>Approved</h4>
-            <div class="value">{{ approved_count|default(0) }}</div>
+            <div class="value">{{ leave_approved|default(0) }}</div>
         </div>
     </div>
     <div class="summary-card">
@@ -234,7 +234,7 @@
         </div>
         <div class="details">
             <h4>Rejected</h4>
-            <div class="value">{{ rejected_count|default(0) }}</div>
+            <div class="value">{{ leave_rejected|default(0) }}</div>
         </div>
     </div>
     <div class="summary-card">
@@ -242,229 +242,14 @@
             <i class="fas fa-list"></i>
         </div>
         <div class="details">
-            <h4>Total This Month</h4>
-            <div class="value">{{ total_count|default(0) }}</div>
+            <h4>Total</h4>
+            <div class="value">{{ leave_total|default(0) }}</div>
         </div>
     </div>
 </div>
 
-<!-- Tabs -->
-<div class="approval-tabs">
-    <button class="tab active" data-tab="timesheets">
-        <i class="fas fa-clock me-1"></i>Timesheets
-        {% if timesheet_pending|default(0) > 0 %}
-        <span class="badge-count">{{ timesheet_pending|default(0) }}</span>
-        {% endif %}
-    </button>
-    <button class="tab" data-tab="leave">
-        <i class="fas fa-calendar-minus me-1"></i>Leave Requests
-        {% if leave_pending|default(0) > 0 %}
-        <span class="badge-count">{{ leave_pending|default(0) }}</span>
-        {% endif %}
-    </button>
-</div>
-
-<!-- Timesheets Tab -->
-<div class="approval-card tab-content" id="timesheets-content">
-    <div class="card-header">
-        <span><i class="fas fa-clock me-2"></i>Timesheet Approvals</span>
-        <span class="text-muted">Week ending: {{ week_ending|default('Current') }}</span>
-    </div>
-    <div class="card-body">
-        {% if timesheets|default([])|length > 0 %}
-        <table class="approval-table">
-            <thead>
-                <tr>
-                    <th>Associate</th>
-                    <th>Period</th>
-                    <th>Days</th>
-                    <th>OT Hours</th>
-                    <th>Amount</th>
-                    <th>Submitted</th>
-                    <th>Status</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for ts in timesheets|default([]) %}
-                <tr>
-                    <td>
-                        <a href="{{ url_for('candidate_profile', cand_id=ts.candidate_id) }}" style="color:inherit;">
-                            <strong>{{ ts.associate_name }}</strong>
-                        </a>
-                    </td>
-                    <td>{{ ts.period }}</td>
-                    <td>{{ "%.1f"|format(ts.total_days) }}</td>
-                    <td>{{ "%.1f"|format(ts.total_hours) }}</td>
-                    <td>&pound;{{ "%.2f"|format(ts.total_amount) }}</td>
-                    <td class="text-muted" style="font-size:0.85rem;">{{ ts.submitted_at }}</td>
-                    <td>
-                        {% if ts.status == 'Submitted' %}
-                        <span class="status-badge status-pending">Pending</span>
-                        {% elif ts.status == 'Approved' %}
-                        <span class="status-badge status-approved">Approved</span>
-                        {% elif ts.status == 'Rejected' %}
-                        <span class="status-badge status-rejected">Rejected</span>
-                        {% endif %}
-                    </td>
-                    <td style="position:relative;">
-                        <button type="button" class="action-btn view" title="View timesheet entries"
-                                onclick="document.getElementById('tsDetail{{ ts.id }}').classList.toggle('hidden')">
-                            <i class="fas fa-eye"></i>
-                        </button>
-                        {% if ts.status == 'Submitted' %}
-                        <form method="POST" action="{{ url_for('admin_approve_timesheet', ts_id=ts.id) }}" class="d-inline">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <button type="submit" class="action-btn approve" title="Approve"><i class="fas fa-check"></i></button>
-                        </form>
-                        <button type="button" class="action-btn reject" title="Reject"
-                                onclick="document.getElementById('rejectForm{{ ts.id }}').classList.toggle('hidden')">
-                            <i class="fas fa-times"></i>
-                        </button>
-                        <form method="POST" action="{{ url_for('admin_reject_timesheet', ts_id=ts.id) }}" id="rejectForm{{ ts.id }}" class="hidden mt-2"
-                              style="position:absolute; right:0; z-index:10; background:white; border:1px solid #e5e7eb; border-radius:8px; padding:12px; width:320px; box-shadow:0 4px 12px rgba(0,0,0,0.15);">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <label class="form-label small fw-semibold">Reason for rejection</label>
-                            <textarea name="reject_reason" class="form-control form-control-sm mb-2" rows="3" placeholder="Explain why this timesheet is being rejected..." required></textarea>
-                            <div class="d-flex gap-2">
-                                <button type="submit" class="btn btn-sm btn-danger">Reject</button>
-                                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="this.closest('form').classList.add('hidden')">Cancel</button>
-                            </div>
-                        </form>
-                        {% elif ts.status == 'Approved' %}
-                        <span class="text-success"><i class="fas fa-check-circle"></i></span>
-                        {% elif ts.status == 'Rejected' %}
-                        <span class="text-danger"><i class="fas fa-times-circle"></i></span>
-                        {% endif %}
-                    </td>
-                </tr>
-                <tr id="tsDetail{{ ts.id }}" class="hidden">
-                    <td colspan="8" style="background:#f8fafc; padding:16px 24px;">
-                        {# Week grid — mirrors the associate portal layout. Only
-                           time-type rows that the associate actually entered
-                           are shown; OT Multiplier row only appears if any OT
-                           hours were submitted. #}
-                        {% if ts.week_days and ts.time_types_used %}
-                        <div style="overflow-x:auto;">
-                            <table class="table table-sm mb-2" style="font-size:0.8rem; min-width:600px;">
-                                <thead>
-                                    <tr style="background:#f1f5f9;">
-                                        <th style="min-width:140px;">Time Type</th>
-                                        {% for d in ts.week_days %}
-                                        <th style="text-align:center; min-width:64px;">{{ d.short }}<br><small class="text-muted">{{ d.dom }}</small></th>
-                                        {% endfor %}
-                                        <th style="text-align:center;">Total</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {% for tt in ts.time_types_used %}
-                                    {% set is_ot = 'overtime' in tt|lower %}
-                                    {% set row_total = namespace(v=0) %}
-                                    <tr>
-                                        <td style="font-weight:600; white-space:nowrap;">{{ tt }}</td>
-                                        {% for d in ts.week_days %}
-                                            {% set v = ts.entries_grid.get((d.date, tt), 0) %}
-                                            {% if v %}{% set row_total.v = row_total.v + v %}{% endif %}
-                                            <td style="text-align:center;">
-                                                {% if v %}
-                                                    {% if is_ot %}{{ "%.1f"|format(v) }}h{% else %}{% if v == 0.5 %}½{% else %}{{ "%.0f"|format(v) }}{% endif %}{% endif %}
-                                                {% else %}
-                                                    <span class="text-muted">—</span>
-                                                {% endif %}
-                                            </td>
-                                        {% endfor %}
-                                        <td style="text-align:center; font-weight:600;">
-                                            {% if is_ot %}{{ "%.1f"|format(row_total.v) }}h{% else %}{{ "%.1f"|format(row_total.v) }}{% endif %}
-                                        </td>
-                                    </tr>
-                                    {% endfor %}
-                                    {% if ts.has_ot and ts.ot_multipliers %}
-                                    <tr style="background:#fffbeb;">
-                                        <td style="font-weight:600; white-space:nowrap;">OT Multiplier</td>
-                                        {% for d in ts.week_days %}
-                                            {% set m = ts.ot_multipliers.get(d.date) %}
-                                            <td style="text-align:center;">
-                                                {% if m %}{{ m }}x{% else %}<span class="text-muted">—</span>{% endif %}
-                                            </td>
-                                        {% endfor %}
-                                        <td></td>
-                                    </tr>
-                                    {% endif %}
-                                </tbody>
-                                <tfoot>
-                                    <tr style="background:#f8fafc;">
-                                        <td style="font-weight:700;">Totals</td>
-                                        <td colspan="{{ ts.week_days|length }}" style="text-align:right; font-weight:600;">
-                                            {{ "%.1f"|format(ts.total_days) }} day{{ 's' if ts.total_days != 1 }}
-                                            {% if ts.total_hours %} &middot; {{ "%.1f"|format(ts.total_hours) }} OT hours{% endif %}
-                                        </td>
-                                        <td style="text-align:center; font-weight:700; color:#059669;">&pound;{{ "%.2f"|format(ts.total_amount) }}</td>
-                                    </tr>
-                                </tfoot>
-                            </table>
-                        </div>
-                        {% if ts.day_rate %}
-                        <div class="text-muted small mb-2">
-                            Day Rate: &pound;{{ "%.2f"|format(ts.day_rate) }}
-                            {% if ts.overtime_rate %} &middot; OT Rate: &pound;{{ "%.2f"|format(ts.overtime_rate) }}/h{% endif %}
-                        </div>
-                        {% endif %}
-                        {% else %}
-                        <p class="text-muted small mb-0">No time entries recorded.</p>
-                        {% endif %}
-
-                        {% if ts.expenses %}
-                        <div class="fw-semibold small mt-3 mb-1"><i class="fas fa-receipt me-1"></i>Expenses</div>
-                        <table class="table table-sm mb-0" style="font-size:0.8rem;">
-                            <thead>
-                                <tr style="background:#f1f5f9;">
-                                    <th>Date</th>
-                                    <th>Type</th>
-                                    <th>Description</th>
-                                    <th style="text-align:right;">Amount</th>
-                                    <th>Receipt</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for exp in ts.expenses %}
-                                <tr>
-                                    <td>{{ exp.date or '—' }}</td>
-                                    <td>{{ exp.type }}</td>
-                                    <td>{{ exp.description or '—' }}</td>
-                                    <td style="text-align:right;">&pound;{{ "%.2f"|format(exp.amount) }}</td>
-                                    <td>
-                                        {% if exp.receipt_doc_id %}
-                                        <a href="{{ url_for('download_document', doc_id=exp.receipt_doc_id) }}"
-                                           class="btn btn-sm btn-outline-primary" style="font-size:0.7rem;"
-                                           title="{{ exp.receipt_original_name }}" target="_blank" rel="noopener">
-                                            <i class="fas fa-paperclip me-1"></i>{{ exp.receipt_original_name|truncate(20, True, '…') }}
-                                        </a>
-                                        {% else %}
-                                        <span class="text-muted">No receipt</span>
-                                        {% endif %}
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                        {% endif %}
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        {% else %}
-        <div class="empty-state">
-            <i class="fas fa-check-circle"></i>
-            <h5>No pending timesheets</h5>
-            <p>All timesheets have been reviewed</p>
-        </div>
-        {% endif %}
-    </div>
-</div>
-
-<!-- Leave Tab -->
-<div class="approval-card tab-content" id="leave-content" style="display: none;">
+<!-- Leave Requests -->
+<div class="approval-card" id="leave-content">
     <div class="card-header">
         <span><i class="fas fa-calendar-minus me-2"></i>Leave Requests</span>
         <button type="button" class="action-btn view" onclick="document.getElementById('createLeaveForm').classList.toggle('hidden')">
@@ -568,25 +353,5 @@
     </div>
 </div>
 
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    // Tab switching
-    document.querySelectorAll('.approval-tabs .tab').forEach(tab => {
-        tab.addEventListener('click', function() {
-            // Remove active from all tabs
-            document.querySelectorAll('.approval-tabs .tab').forEach(t => t.classList.remove('active'));
-            // Add active to clicked tab
-            this.classList.add('active');
-            
-            // Hide all tab content
-            document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
-            
-            // Show selected tab content
-            const tabId = this.dataset.tab;
-            document.getElementById(tabId + '-content').style.display = 'block';
-        });
-    });
-});
-</script>
 </div>
 {% endblock %}
