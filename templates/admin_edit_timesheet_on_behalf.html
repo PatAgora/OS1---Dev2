@@ -30,7 +30,9 @@
     {% endif %}
 {% endwith %}
 
-<div class="card">
+{# ===== Time grid ===== #}
+<div class="card mb-3">
+    <div class="card-header"><strong><i class="fas fa-calendar-week me-1"></i> Time entries</strong></div>
     <div class="card-body">
         <form method="POST">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -49,15 +51,28 @@
                         <tr>
                             <td class="text-start"><strong>{{ tt }}</strong>
                                 {% if tt == 'Overtime' %}<small class="text-muted">(hours)</small>
-                                {% else %}<small class="text-muted">(0 / 0.5 / 1)</small>{% endif %}
+                                {% else %}<small class="text-muted">(0.0 / 0.5 / 1.0)</small>{% endif %}
                             </td>
                             {% for d in week %}
                                 {% set iso = d.isoformat() %}
                                 {% set key = (iso, tt) %}
+                                {% set val = entries.get(key) %}
                                 <td>
-                                    <input type="number" step="0.5" min="0" class="form-control form-control-sm text-end"
+                                    {% if tt == 'Overtime' %}
+                                    <input type="number" step="0.25" min="0"
+                                           class="form-control form-control-sm text-end"
                                            name="entry_{{ iso }}_{{ tt.replace(' ', '__') }}"
-                                           value="{{ entries.get(key) or '' }}">
+                                           value="{{ val if val else '' }}"
+                                           style="max-width:88px; margin:0 auto;">
+                                    {% else %}
+                                    <select class="form-select form-select-sm text-center"
+                                            name="entry_{{ iso }}_{{ tt.replace(' ', '__') }}"
+                                            style="max-width:84px; margin:0 auto;">
+                                        <option value="0" {% if not val or val == 0 %}selected{% endif %}>0.0</option>
+                                        <option value="0.5" {% if val == 0.5 %}selected{% endif %}>0.5</option>
+                                        <option value="1" {% if val == 1 or val == 1.0 %}selected{% endif %}>1.0</option>
+                                    </select>
+                                    {% endif %}
                                 </td>
                             {% endfor %}
                         </tr>
@@ -72,7 +87,7 @@
                 </button>
                 <button type="submit" name="submit_action" value="submit" class="btn btn-primary"
                         onclick="return confirm('Save AND submit this timesheet on the associate\\'s behalf?');">
-                    <i class="fas fa-paper-plane me-1"></i> Save & Submit
+                    <i class="fas fa-paper-plane me-1"></i> Save &amp; Submit
                 </button>
                 <a href="{{ url_for('admin_timesheets') }}" class="btn btn-outline-secondary ms-auto">Cancel</a>
             </div>
@@ -80,12 +95,201 @@
     </div>
 </div>
 
-<div class="alert alert-info mt-3 small">
+{# ===== Expenses card =====
+   Mirrors the Associate Portal expense block: category-driven VAT,
+   Mileage swap (£ → miles), receipt upload, edit/remove per row.
+   Backend routes are admin-only (not gated on the Associate session)
+   so the recruiter can curate the list directly. #}
+<div class="card mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <strong><i class="fas fa-receipt me-1"></i> Expenses</strong>
+        <small class="text-muted">Net + VAT auto-derived from the category.</small>
+    </div>
+    <div class="card-body">
+        {% if expenses %}
+        <table class="table table-sm align-middle mb-3" style="font-size:0.85rem;">
+            <thead class="table-light">
+                <tr>
+                    <th>Category</th><th>Description</th><th>Date</th>
+                    <th class="text-end">Net</th>
+                    <th class="text-end">VAT %</th>
+                    <th class="text-end">VAT</th>
+                    <th>Receipt</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for exp in expenses %}
+                <tr>
+                    <td>{{ exp.expense_type }}{% if exp.distance_miles %} <span class="text-muted">({{ exp.distance_miles }} mi)</span>{% endif %}</td>
+                    <td>{{ exp.description or '' }}</td>
+                    <td>{{ exp.date_of_expense.strftime('%d/%m/%Y') if exp.date_of_expense else '—' }}</td>
+                    <td class="text-end">£{{ "%.2f"|format(exp.amount or 0) }}</td>
+                    <td class="text-end">{{ '%.0f'|format(exp.vat_rate_pct or 0) }}%</td>
+                    <td class="text-end">£{{ "%.2f"|format(exp.vat_amount or 0) }}</td>
+                    <td>
+                        {% if exp.receipt_doc_id %}
+                        <a href="{{ url_for('download_document', doc_id=exp.receipt_doc_id) }}" target="_blank">View</a>
+                        {% else %}<span class="text-muted">—</span>{% endif %}
+                    </td>
+                    <td class="text-end" style="white-space:nowrap;">
+                        <button type="button" class="btn btn-sm btn-outline-secondary admin-exp-edit-btn"
+                                title="Edit"
+                                data-edit-url="{{ url_for('admin_ts_expense_edit', ts_id=ts.id, exp_id=exp.id) }}"
+                                data-cat-id="{{ exp.expense_category_id or '' }}"
+                                data-date="{{ exp.date_of_expense.strftime('%Y-%m-%d') if exp.date_of_expense else '' }}"
+                                data-amount="{{ '%.2f'|format(exp.amount or 0) }}"
+                                data-distance="{{ exp.distance_miles or '' }}"
+                                data-description="{{ exp.description or '' }}">
+                            <i class="fas fa-pen"></i>
+                        </button>
+                        <form method="POST" action="{{ url_for('admin_ts_expense_delete', ts_id=ts.id, exp_id=exp.id) }}"
+                              class="d-inline" onsubmit="return confirm('Remove this expense line?');">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove"><i class="fas fa-times"></i></button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted small mb-3">No expense lines yet.</p>
+        {% endif %}
+
+        {# Add / Edit expense form. JS swaps the action URL + repopulates
+           when the row's pen icon is clicked. Mileage categories swap
+           the £-amount input for a miles input + live derivation. #}
+        <div class="p-3" style="background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb;">
+            <h4 style="font-size:14px;margin:0 0 12px;" id="adminExpFormHeading"><i class="fas fa-plus-circle me-1"></i> Add Expense</h4>
+            <form method="POST" action="{{ url_for('admin_ts_expense_add', ts_id=ts.id) }}"
+                  enctype="multipart/form-data" id="adminAddExpenseForm"
+                  data-add-action="{{ url_for('admin_ts_expense_add', ts_id=ts.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="row g-2 align-items-end">
+                    <div class="col-md-3">
+                        <label class="form-label" style="font-size:12px;">Category</label>
+                        <select name="expense_category_id" id="adminExpCategorySelect" class="form-select form-select-sm" required>
+                            <option value="">— pick a category —</option>
+                            {% for c in expense_categories %}
+                            <option value="{{ c.id }}"
+                                    data-name="{{ c.name }}"
+                                    data-vat="{{ c.vat_treatment }}"
+                                    data-mileage="{{ '1' if c.is_mileage else '0' }}">
+                                {{ c.name }}
+                                {% if c.vat_treatment == 'standard' %}(VAT 20%)
+                                {% elif c.vat_treatment == 'reduced' %}(VAT 5%)
+                                {% elif c.vat_treatment == 'zero' %}(VAT 0%)
+                                {% else %}(Non-VATable){% endif %}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label" style="font-size:12px;">Date</label>
+                        <input type="date" name="expense_date" id="adminExpDate" class="form-control form-control-sm">
+                    </div>
+                    <div class="col-md-2" id="adminExpAmountWrapper">
+                        <label class="form-label" style="font-size:12px;">Amount (£)</label>
+                        <input type="number" name="expense_amount" id="adminExpAmount" class="form-control form-control-sm" step="0.01" min="0.01">
+                    </div>
+                    <div class="col-md-2" id="adminExpDistanceWrapper" style="display:none;">
+                        <label class="form-label" style="font-size:12px;">Distance (miles)</label>
+                        <input type="number" name="expense_distance" id="adminExpDistance" class="form-control form-control-sm" step="0.1" min="0" placeholder="0">
+                        <small class="text-muted" id="adminExpMileageDerived">£0.00 @ £{{ '%.2f'|format(hmrc_mileage_rate) }}/mile</small>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label" style="font-size:12px;">Description</label>
+                        <input type="text" name="expense_description" id="adminExpDescription" class="form-control form-control-sm" placeholder="Brief description">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label" style="font-size:12px;">Receipt</label>
+                        <input type="file" name="expense_receipt" class="form-control form-control-sm" accept=".pdf,.jpg,.jpeg,.png">
+                    </div>
+                    <div class="col-md-1">
+                        <button type="submit" class="btn btn-sm btn-primary w-100" id="adminExpSubmitBtn" title="Save"><i class="fas fa-plus"></i></button>
+                    </div>
+                    <div class="col-md-1">
+                        <button type="button" class="btn btn-sm btn-outline-secondary w-100" id="adminExpCancelEdit"
+                                style="display:none;">Cancel</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="alert alert-info small">
     <i class="fas fa-info-circle me-1"></i>
-    Non-overtime values are clamped to {0, 0.5, 1} server-side, matching the
-    associate portal behaviour. The action is logged in the audit log naming
-    the admin who made the edit.
+    Non-overtime time values are constrained to 0.0 / 0.5 / 1.0 (matching the
+    Associate Portal). Every save / submit / expense action is audit-logged
+    against your user.
 </div>
 
 </div>
+
+<script>
+(function() {
+    var HMRC_RATE = {{ hmrc_mileage_rate|tojson }};
+    var sel  = document.getElementById('adminExpCategorySelect');
+    var amtW = document.getElementById('adminExpAmountWrapper');
+    var distW = document.getElementById('adminExpDistanceWrapper');
+    var amtIn = document.getElementById('adminExpAmount');
+    var distIn = document.getElementById('adminExpDistance');
+    var derivedEl = document.getElementById('adminExpMileageDerived');
+    var heading = document.getElementById('adminExpFormHeading');
+    var form = document.getElementById('adminAddExpenseForm');
+    var cancelBtn = document.getElementById('adminExpCancelEdit');
+    var submitBtn = document.getElementById('adminExpSubmitBtn');
+
+    function syncMileageMode() {
+        var opt = sel.options[sel.selectedIndex];
+        var isMileage = (opt && opt.dataset && opt.dataset.mileage === '1');
+        amtW.style.display  = isMileage ? 'none' : '';
+        distW.style.display = isMileage ? '' : 'none';
+        amtIn.required  = !isMileage;
+        distIn.required = !!isMileage;
+    }
+    function recomputeDerived() {
+        if (!distW || distW.style.display === 'none') return;
+        var miles = parseFloat(distIn.value) || 0;
+        var amt = miles * HMRC_RATE;
+        if (derivedEl) {
+            derivedEl.textContent = '£' + amt.toFixed(2) + ' @ £' + HMRC_RATE.toFixed(2) + '/mile';
+        }
+    }
+    sel.addEventListener('change', function() { syncMileageMode(); recomputeDerived(); });
+    distIn.addEventListener('input', recomputeDerived);
+    syncMileageMode();
+
+    function resetForm() {
+        form.action = form.dataset.addAction;
+        form.reset();
+        syncMileageMode();
+        recomputeDerived();
+        heading.innerHTML = '<i class="fas fa-plus-circle me-1"></i> Add Expense';
+        submitBtn.innerHTML = '<i class="fas fa-plus"></i>';
+        cancelBtn.style.display = 'none';
+    }
+    cancelBtn.addEventListener('click', resetForm);
+
+    document.querySelectorAll('.admin-exp-edit-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            form.action = this.dataset.editUrl;
+            heading.innerHTML = '<i class="fas fa-pen me-1"></i> Edit Expense';
+            submitBtn.innerHTML = '<i class="fas fa-save"></i>';
+            cancelBtn.style.display = '';
+            var catId = this.dataset.catId || '';
+            sel.value = catId;
+            syncMileageMode();
+            document.getElementById('adminExpDate').value = this.dataset.date || '';
+            amtIn.value = this.dataset.amount || '';
+            distIn.value = this.dataset.distance || '';
+            document.getElementById('adminExpDescription').value = this.dataset.description || '';
+            recomputeDerived();
+            form.scrollIntoView({behavior: 'smooth', block: 'center'});
+        });
+    });
+})();
+</script>
 {% endblock %}

@@ -2391,9 +2391,331 @@ def admin_edit_timesheet_on_behalf(ts_id):
             flash(f"Timesheet #{ts_id} updated{'and submitted' if ts.status == 'Submitted' else ''}.", "success")
             return redirect(url_for("admin_timesheets"))
 
+    # Load expenses, expense categories, and the HMRC mileage rate so
+    # the admin Edit-on-behalf page can mirror the Associate Portal
+    # Expenses card — same add/edit/delete UX, just admin-authenticated.
+    expenses_list = []
+    expense_categories_list = []
+    try:
+        with Session(engine) as s2:
+            exp_rows = s2.execute(text(
+                "SELECT id, expense_type, description, amount, vat_rate_pct, "
+                "       vat_amount, date_of_expense, distance_miles, "
+                "       expense_category_id, receipt_doc_id "
+                "FROM timesheet_expenses WHERE timesheet_id = :tid "
+                "ORDER BY date_of_expense, id"
+            ).bindparams(tid=ts_id)).all()
+            for r in exp_rows:
+                expenses_list.append({
+                    "id": r.id, "expense_type": r.expense_type or "",
+                    "description": r.description or "",
+                    "amount": float(r.amount or 0),
+                    "vat_rate_pct": float(r.vat_rate_pct or 0),
+                    "vat_amount": float(r.vat_amount or 0),
+                    "date_of_expense": r.date_of_expense,
+                    "distance_miles": r.distance_miles,
+                    "expense_category_id": r.expense_category_id,
+                    "receipt_doc_id": r.receipt_doc_id,
+                })
+            cat_rows = s2.execute(text(
+                "SELECT id, name, vat_treatment, is_mileage FROM expense_categories "
+                "ORDER BY sort_order, name"
+            )).all()
+            expense_categories_list = [
+                {"id": c.id, "name": c.name, "vat_treatment": c.vat_treatment,
+                 "is_mileage": bool(c.is_mileage)}
+                for c in cat_rows
+            ]
+    except Exception:
+        pass
+    try:
+        hmrc_mileage_rate = float(_company_settings().get("hmrc_mileage_rate", 0.45))
+    except Exception:
+        hmrc_mileage_rate = 0.45
+
     return render_template("admin_edit_timesheet_on_behalf.html",
                            ts=ts, cand=cand, eng=eng, week=week, entries=entries,
-                           time_types=["Standard Time", "Holiday", "Sickness", "Overtime"])
+                           time_types=["Standard Time", "Holiday", "Sickness", "Overtime"],
+                           expenses=expenses_list,
+                           expense_categories=expense_categories_list,
+                           hmrc_mileage_rate=hmrc_mileage_rate)
+
+
+# ----- Admin expense CRUD on a specific timesheet -----
+# These mirror the Associate-portal handlers (timesheets_add_expense /
+# timesheets_edit_expense / timesheets_delete_expense) but are gated
+# on admin role rather than ts.user_id matching the session user, so
+# the recruiter can curate an Associate's expense lines from
+# /admin/timesheets/<id>/edit-on-behalf without impersonating.
+
+_ADMIN_EXP_VAT_MAP = {"standard": 20.0, "reduced": 5.0, "zero": 0.0, "non_vatable": 0.0}
+_ADMIN_EXP_MAX_BYTES = 5 * 1024 * 1024  # IR 28
+_ADMIN_EXP_ALLOWED_MIME = {"application/pdf", "image/jpeg", "image/png"}
+
+
+def _admin_save_receipt(s, file_storage):
+    """Persist an uploaded receipt under the same path the Associate
+    portal uses (Document store) and return the new Document.id, or
+    None when nothing was uploaded or the upload was rejected."""
+    if not file_storage or not file_storage.filename:
+        return None
+    raw = file_storage.read() or b""
+    if len(raw) > _ADMIN_EXP_MAX_BYTES:
+        flash("Receipt rejected — max 5 MB.", "warning")
+        return None
+    mime = (getattr(file_storage, "mimetype", "") or "").lower()
+    if mime not in _ADMIN_EXP_ALLOWED_MIME:
+        flash("Receipt rejected — only PDF, JPG, JPEG, PNG accepted.", "warning")
+        return None
+    file_storage.stream.seek(0)
+    fname = secure_filename(file_storage.filename)
+    saved_path = os.path.join(app.config.get("UPLOAD_FOLDER", "uploads"), fname)
+    try:
+        os.makedirs(os.path.dirname(saved_path), exist_ok=True)
+        with open(saved_path, "wb") as fh:
+            fh.write(raw)
+        doc = Document(
+            filename=saved_path,
+            original_name=file_storage.filename,
+            mime_type=mime,
+            size_bytes=len(raw),
+            doc_type="expense_receipt",
+            uploaded_at=datetime.datetime.utcnow(),
+            uploaded_by=current_user.id if current_user.is_authenticated else None,
+        )
+        s.add(doc)
+        s.flush()
+        return doc.id
+    except Exception:
+        return None
+
+
+def _admin_resolve_category(s, raw_id, fallback_name=""):
+    """Return (cat_row_or_None, vat_pct, is_mileage, canonical_name)
+    matching the chosen ExpenseCategory. Falls back to Standard 20%
+    when no category matches, mirroring the Associate side."""
+    cat_id = None
+    try:
+        cat_id = int(raw_id) if raw_id else None
+    except (TypeError, ValueError):
+        cat_id = None
+    cat = None
+    if cat_id is not None:
+        try:
+            cat = s.execute(text(
+                "SELECT id, name, vat_treatment, is_mileage FROM expense_categories WHERE id = :id"
+            ).bindparams(id=cat_id)).first()
+        except Exception:
+            cat = None
+    if not cat and fallback_name:
+        try:
+            cat = s.execute(text(
+                "SELECT id, name, vat_treatment, is_mileage FROM expense_categories WHERE LOWER(name) = LOWER(:n)"
+            ).bindparams(n=fallback_name)).first()
+        except Exception:
+            cat = None
+    if cat:
+        treatment = (cat[2] or "standard")
+        return cat, _ADMIN_EXP_VAT_MAP.get(treatment, 20.0), bool(cat[3]), cat[1]
+    return None, 20.0, False, (fallback_name or "Other")
+
+
+@app.route("/admin/timesheets/<int:ts_id>/expense/add", methods=["POST"])
+@login_required
+def admin_ts_expense_add(ts_id: int):
+    """Admin adds an expense line to a timesheet on behalf of an
+    Associate. Mirrors timesheets_add_expense but bypasses the
+    cand_id == ts.user_id check (admin-role gated instead)."""
+    if (current_user.role or "").lower() != "admin":
+        flash("Admin access required.", "danger")
+        return redirect(url_for("admin_timesheets"))
+    from associate_portal import _portal_model
+    TimesheetExpense = _portal_model("TimesheetExpense")
+    if not TimesheetExpense:
+        flash("Expense model not available.", "danger")
+        return redirect(url_for("admin_edit_timesheet_on_behalf", ts_id=ts_id))
+    with Session(engine) as s:
+        ts = s.get(Timesheet, ts_id)
+        if not ts:
+            abort(404)
+        cat, vat_pct, is_mileage, canonical_name = _admin_resolve_category(
+            s, request.form.get("expense_category_id"),
+            (request.form.get("expense_type") or "").strip(),
+        )
+        # Date / description
+        date_raw = (request.form.get("expense_date") or "").strip()
+        date_of_expense = None
+        if date_raw:
+            try:
+                date_of_expense = datetime.date.fromisoformat(date_raw)
+            except ValueError:
+                date_of_expense = None
+        description = (request.form.get("expense_description") or "").strip()[:500]
+        # Amount: mileage = miles × HMRC rate, else direct.
+        if is_mileage:
+            try:
+                miles = float(request.form.get("expense_distance") or 0)
+            except ValueError:
+                miles = 0
+            if miles <= 0:
+                flash("Mileage distance must be greater than zero.", "warning")
+                return redirect(url_for("admin_edit_timesheet_on_behalf", ts_id=ts_id))
+            try:
+                hmrc_rate = float(_company_settings().get("hmrc_mileage_rate", 0.45))
+            except Exception:
+                hmrc_rate = 0.45
+            amount = round(miles * hmrc_rate, 2)
+            distance_miles = miles
+        else:
+            try:
+                amount = float(request.form.get("expense_amount") or 0)
+            except ValueError:
+                amount = 0
+            if amount <= 0:
+                flash("Expense amount must be greater than zero.", "warning")
+                return redirect(url_for("admin_edit_timesheet_on_behalf", ts_id=ts_id))
+            distance_miles = None
+        vat_amount = round(amount * (vat_pct / 100.0), 2)
+        receipt_doc_id = _admin_save_receipt(s, request.files.get("expense_receipt"))
+        new_exp = TimesheetExpense(
+            timesheet_id=ts_id,
+            expense_type=canonical_name,
+            description=description,
+            amount=amount,
+            vat_rate_pct=vat_pct,
+            vat_amount=vat_amount,
+            date_of_expense=date_of_expense,
+            distance_miles=distance_miles,
+            expense_category_id=(cat[0] if cat else None),
+            receipt_doc_id=receipt_doc_id,
+        )
+        s.add(new_exp)
+        # Refresh parent totals.
+        all_rows = s.query(TimesheetExpense).filter_by(timesheet_id=ts_id).all()
+        ts.expense_total = sum(float(r.amount or 0) for r in all_rows) + amount
+        ts.grand_total = (ts.total_amount or 0) + ts.expense_total
+        s.commit()
+        try:
+            log_audit_event("create", "timesheet",
+                            f"Admin added expense to TS-{ts_id} ({canonical_name}, £{amount:.2f})",
+                            "timesheet", ts_id,
+                            {"amount": amount, "category": canonical_name, "is_mileage": is_mileage})
+        except Exception:
+            pass
+    flash("Expense added.", "success")
+    return redirect(url_for("admin_edit_timesheet_on_behalf", ts_id=ts_id))
+
+
+@app.route("/admin/timesheets/<int:ts_id>/expense/<int:exp_id>/edit", methods=["POST"])
+@login_required
+def admin_ts_expense_edit(ts_id: int, exp_id: int):
+    """Admin edits an existing expense line on a timesheet. Mirrors
+    timesheets_edit_expense but admin-role gated."""
+    if (current_user.role or "").lower() != "admin":
+        flash("Admin access required.", "danger")
+        return redirect(url_for("admin_timesheets"))
+    from associate_portal import _portal_model
+    TimesheetExpense = _portal_model("TimesheetExpense")
+    if not TimesheetExpense:
+        flash("Expense model not available.", "danger")
+        return redirect(url_for("admin_edit_timesheet_on_behalf", ts_id=ts_id))
+    with Session(engine) as s:
+        exp = s.get(TimesheetExpense, exp_id)
+        if not exp or exp.timesheet_id != ts_id:
+            flash("Expense not found.", "warning")
+            return redirect(url_for("admin_edit_timesheet_on_behalf", ts_id=ts_id))
+        ts = s.get(Timesheet, ts_id)
+        cat, vat_pct, is_mileage, canonical_name = _admin_resolve_category(
+            s, request.form.get("expense_category_id"),
+            (request.form.get("expense_type") or exp.expense_type or "").strip(),
+        )
+        if cat:
+            exp.expense_category_id = cat[0]
+            exp.expense_type = canonical_name
+            exp.vat_rate_pct = vat_pct
+        date_raw = (request.form.get("expense_date") or "").strip()
+        if date_raw:
+            try:
+                exp.date_of_expense = datetime.date.fromisoformat(date_raw)
+            except ValueError:
+                pass
+        desc = request.form.get("expense_description")
+        if desc is not None:
+            exp.description = desc.strip()[:500]
+        if is_mileage:
+            dist_raw = (request.form.get("expense_distance") or "").strip()
+            try:
+                miles = float(dist_raw) if dist_raw else 0
+            except ValueError:
+                miles = 0
+            if miles > 0:
+                try:
+                    hmrc_rate = float(_company_settings().get("hmrc_mileage_rate", 0.45))
+                except Exception:
+                    hmrc_rate = 0.45
+                exp.distance_miles = miles
+                exp.amount = round(miles * hmrc_rate, 2)
+        else:
+            amt_raw = (request.form.get("expense_amount") or "").strip()
+            try:
+                amt = float(amt_raw) if amt_raw else exp.amount
+            except ValueError:
+                amt = exp.amount
+            if amt > 0:
+                exp.amount = amt
+        exp.vat_amount = round((exp.amount or 0) * ((exp.vat_rate_pct or 0) / 100.0), 2)
+        # Optional new receipt — if file uploaded, replace doc id.
+        new_doc = _admin_save_receipt(s, request.files.get("expense_receipt"))
+        if new_doc:
+            exp.receipt_doc_id = new_doc
+        all_rows = s.query(TimesheetExpense).filter_by(timesheet_id=ts_id).all()
+        ts.expense_total = sum(float(r.amount or 0) for r in all_rows)
+        ts.grand_total = (ts.total_amount or 0) + ts.expense_total
+        s.commit()
+        try:
+            log_audit_event("update", "timesheet",
+                            f"Admin edited expense #{exp_id} on TS-{ts_id}",
+                            "timesheet", ts_id, {"expense_id": exp_id, "amount": exp.amount})
+        except Exception:
+            pass
+    flash("Expense updated.", "success")
+    return redirect(url_for("admin_edit_timesheet_on_behalf", ts_id=ts_id))
+
+
+@app.route("/admin/timesheets/<int:ts_id>/expense/<int:exp_id>/delete", methods=["POST"])
+@login_required
+def admin_ts_expense_delete(ts_id: int, exp_id: int):
+    """Admin removes an expense line from a timesheet."""
+    if (current_user.role or "").lower() != "admin":
+        flash("Admin access required.", "danger")
+        return redirect(url_for("admin_timesheets"))
+    from associate_portal import _portal_model
+    TimesheetExpense = _portal_model("TimesheetExpense")
+    if not TimesheetExpense:
+        flash("Expense model not available.", "danger")
+        return redirect(url_for("admin_edit_timesheet_on_behalf", ts_id=ts_id))
+    with Session(engine) as s:
+        exp = s.get(TimesheetExpense, exp_id)
+        if not exp or exp.timesheet_id != ts_id:
+            flash("Expense not found.", "warning")
+            return redirect(url_for("admin_edit_timesheet_on_behalf", ts_id=ts_id))
+        ts = s.get(Timesheet, ts_id)
+        s.delete(exp)
+        all_rows = s.query(TimesheetExpense).filter(
+            TimesheetExpense.timesheet_id == ts_id,
+            TimesheetExpense.id != exp_id,
+        ).all()
+        ts.expense_total = sum(float(r.amount or 0) for r in all_rows)
+        ts.grand_total = (ts.total_amount or 0) + ts.expense_total
+        s.commit()
+        try:
+            log_audit_event("delete", "timesheet",
+                            f"Admin removed expense #{exp_id} from TS-{ts_id}",
+                            "timesheet", ts_id, {"expense_id": exp_id})
+        except Exception:
+            pass
+    flash("Expense removed.", "success")
+    return redirect(url_for("admin_edit_timesheet_on_behalf", ts_id=ts_id))
 
 
 @app.route("/admin/leave-reasons/add", methods=["POST"])
