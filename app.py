@@ -4153,6 +4153,10 @@ def admin_approver_portal_create():
             return redirect(url_for("admin_approver_portal"))
         magic_token = secrets.token_urlsafe(32)
         magic_expires = datetime.datetime.utcnow() + datetime.timedelta(hours=48)
+        # Approver-only account: credentials live on the approver_*
+        # columns. password_hash is set to a throwaway random so the
+        # NOT-NULL DB constraint is satisfied — the main OS1 login is
+        # NOT meant to be used for this account; only /approver/login.
         new_user = User(
             name=name,
             email=email,
@@ -4161,8 +4165,8 @@ def admin_approver_portal_create():
             is_active=True,
             is_approver=True,
             created_at=datetime.datetime.utcnow(),
-            magic_token=magic_token,
-            magic_token_expires=magic_expires,
+            approver_magic_token=magic_token,
+            approver_magic_token_expires=magic_expires,
         )
         s.add(new_user)
         s.flush()
@@ -4226,10 +4230,13 @@ def admin_approver_portal_reset(user_id: int):
         if not u:
             flash("User not found.", "warning")
             return redirect(url_for("admin_approver_portal"))
-        u.magic_token = secrets.token_urlsafe(32)
-        u.magic_token_expires = datetime.datetime.utcnow() + datetime.timedelta(hours=48)
+        # Reset the APPROVER-side token only; the user's main OS1
+        # magic_token / password remain untouched so a user with both
+        # logins keeps their primary access while setting up approver.
+        u.approver_magic_token = secrets.token_urlsafe(32)
+        u.approver_magic_token_expires = datetime.datetime.utcnow() + datetime.timedelta(hours=48)
         s.commit()
-        link = request.url_root.rstrip('/') + url_for('approver.onboard', token=u.magic_token)
+        link = request.url_root.rstrip('/') + url_for('approver.onboard', token=u.approver_magic_token)
         try:
             log_audit_event("update", "user_mgmt", f"Password reset link generated for approver {u.email}",
                             "user", user_id, {})
@@ -8193,6 +8200,17 @@ class User(Base, UserMixin):
     # / Associate can ALSO be flagged as an approver without losing their
     # primary role. Drives inclusion on the Approver Portal Admin listing.
     is_approver = Column(Boolean, default=False, nullable=True)
+    # Approver-portal credentials — fully isolated from the main OS1
+    # login so the SAME email can hold both an Admin / Associate login
+    # AND a separate Approver login with different passwords, 2FA, and
+    # session histories. /approver/login reads approver_password_hash
+    # + approver_totp_*; the magic-link onboard flow writes them.
+    approver_password_hash = Column(Text, nullable=True)
+    approver_totp_secret = Column(String(32), nullable=True)
+    approver_totp_enabled = Column(Boolean, default=False, nullable=True)
+    approver_magic_token = Column(String(255), nullable=True)
+    approver_magic_token_expires = Column(DateTime, nullable=True)
+    approver_last_login = Column(DateTime, nullable=True)
     
     # 2FA/MFA columns
     totp_secret = Column(String(32), nullable=True)
@@ -8226,13 +8244,22 @@ class User(Base, UserMixin):
         return pyotp.random_base32()
     
     def verify_totp(self, token):
-        """Verify a TOTP token"""
+        """Verify a TOTP token against the main OS1 login secret."""
         if not self.totp_secret:
             return False
         import pyotp
         totp = pyotp.TOTP(self.totp_secret)
         return totp.verify(token, valid_window=1)  # Allow 1 window before/after
-    
+
+    def verify_approver_totp(self, token):
+        """Verify a TOTP token against the SEPARATE approver-portal
+        secret. Approver auth is isolated from the main login."""
+        if not getattr(self, "approver_totp_secret", None):
+            return False
+        import pyotp
+        totp = pyotp.TOTP(self.approver_totp_secret)
+        return totp.verify(token, valid_window=1)
+
     def generate_backup_codes(self, count=10):
         """Generate backup codes for account recovery"""
         import secrets
@@ -10687,6 +10714,42 @@ try:
             _rc.execute(text(
                 "UPDATE users SET is_approver = TRUE "
                 "WHERE LOWER(role) = 'approver' AND (is_approver IS NULL OR is_approver = FALSE)"
+            ))
+        except Exception:
+            pass
+
+        # --- approver-portal isolated credentials (additive) ---
+        # Approver auth is fully separate from the main OS1 login so the
+        # same email can hold both an OS1 admin/employee login AND a
+        # separate approver login with different password + 2FA.
+        for _coldef in (
+            "approver_password_hash TEXT",
+            "approver_totp_secret VARCHAR(32)",
+            "approver_totp_enabled BOOLEAN DEFAULT FALSE",
+            "approver_magic_token VARCHAR(255)",
+            "approver_magic_token_expires TIMESTAMP",
+            "approver_last_login TIMESTAMP",
+        ):
+            try:
+                _rc.execute(text(f"ALTER TABLE users ADD COLUMN {_coldef}"))
+            except Exception:
+                pass
+        # Backfill: existing role='approver' users were using the main
+        # password_hash / totp_* / magic_token columns. Copy those into
+        # the new approver_* columns so they don't get locked out by the
+        # isolation. WHERE approver_password_hash IS NULL keeps it
+        # idempotent (won't overwrite once approver creds are set
+        # independently).
+        try:
+            _rc.execute(text(
+                "UPDATE users SET "
+                "  approver_password_hash = pw_hash, "
+                "  approver_totp_secret = totp_secret, "
+                "  approver_totp_enabled = COALESCE(totp_enabled, FALSE), "
+                "  approver_magic_token = magic_token, "
+                "  approver_magic_token_expires = magic_token_expires, "
+                "  approver_last_login = last_login "
+                "WHERE LOWER(role) = 'approver' AND approver_password_hash IS NULL"
             ))
         except Exception:
             pass

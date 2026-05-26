@@ -101,6 +101,8 @@ def login():
         return render_template("approver/login.html", stage=stage)
 
     # --- 2FA stage: a code submitted against a pending login ---
+    # Uses the SEPARATE approver TOTP secret (approver_totp_secret)
+    # so the approver's 2FA is independent of any OS1 main-login 2FA.
     pending_uid = session.get(PENDING_2FA_KEY)
     if pending_uid and request.form.get("totp_code"):
         code = (request.form.get("totp_code") or "").strip()
@@ -112,13 +114,13 @@ def login():
                 return redirect(url_for("approver.login"))
             ok = False
             try:
-                ok = u.verify_totp(code)
+                ok = u.verify_approver_totp(code)
             except Exception:
                 ok = False
             if not ok:
                 flash("Invalid authenticator code. Please try again.", "danger")
                 return render_template("approver/login.html", stage="2fa")
-            u.last_login = datetime.utcnow()
+            u.approver_last_login = datetime.utcnow()
             s.commit()
             uid = u.id
         session.pop(PENDING_2FA_KEY, None)
@@ -128,6 +130,9 @@ def login():
         return redirect(url_for("approver.dashboard"))
 
     # --- password stage ---
+    # Approver credentials are isolated from the main OS1 login:
+    # checks approver_password_hash / approver_totp_*. Same email can
+    # hold a different approver password than the user's main login.
     email = (request.form.get("email") or "").strip().lower()
     password = request.form.get("password") or ""
     if not email or not password:
@@ -138,26 +143,31 @@ def login():
         u = s.execute(
             select(User).where(func.lower(User.email) == email)
         ).scalars().first()
-        # Only role='approver' accounts may use this portal.
-        if not u or (u.role or "").lower() != "approver":
+        # Approver-capable: role='approver' OR is_approver flag set.
+        is_approver_capable = bool(u and (
+            (u.role or "").lower() == "approver"
+            or getattr(u, "is_approver", False)
+        ))
+        if not u or not is_approver_capable:
             flash("Invalid email or password.", "danger")
             return redirect(url_for("approver.login"))
         if u.is_active is False:
             flash("This approver account is deactivated. Contact the Optimus team.", "danger")
             return redirect(url_for("approver.login"))
-        if not u.password_hash:
-            flash("Your account isn't set up yet — use the invite link emailed to you.", "info")
+        if not getattr(u, "approver_password_hash", None):
+            flash("Your approver account isn't set up yet — use the invite link emailed to you.", "info")
             return redirect(url_for("approver.login"))
-        if not check_password_hash(u.password_hash, password):
+        if not check_password_hash(u.approver_password_hash, password):
             flash("Invalid email or password.", "danger")
             return redirect(url_for("approver.login"))
 
-        # Password OK. Step up to 2FA if the account has it enabled.
-        if getattr(u, "totp_enabled", False) and getattr(u, "totp_secret", None):
+        # Password OK. Step up to 2FA if the approver-side 2FA is on
+        # (independent of any main-login 2FA on the same email).
+        if getattr(u, "approver_totp_enabled", False) and getattr(u, "approver_totp_secret", None):
             session[PENDING_2FA_KEY] = u.id
             return render_template("approver/login.html", stage="2fa")
 
-        u.last_login = datetime.utcnow()
+        u.approver_last_login = datetime.utcnow()
         s.commit()
         uid = u.id
 
@@ -178,16 +188,15 @@ def logout():
 
 @approver_bp.route("/onboard/<token>", methods=["GET", "POST"])
 def onboard(token):
-    """Magic-link landing for an approver-capable user. Accepts the user
-    when their primary role is 'approver' OR when they carry the
-    additive is_approver=True capability flag (set when an Admin /
-    Employee / Associate is also granted approver access on the
-    Approver Portal Admin page). Sets a password (or refreshes the
-    existing one), then signs them straight in."""
+    """Magic-link landing for an approver-capable user. Sets the
+    approver-portal password (isolated from any main OS1 login the
+    same email may already have — the user's existing admin /
+    associate password is NOT touched). Signs them straight in to
+    the approver portal."""
     User = _model("User")
     with SASession(_engine()) as s:
         u = s.execute(
-            select(User).where(User.magic_token == token)
+            select(User).where(User.approver_magic_token == token)
         ).scalars().first()
         is_approver_capable = bool(u and (
             (u.role or "").lower() == "approver"
@@ -196,7 +205,7 @@ def onboard(token):
         if not u or not is_approver_capable:
             flash("This invite link is invalid.", "danger")
             return redirect(url_for("approver.login"))
-        expires = getattr(u, "magic_token_expires", None)
+        expires = getattr(u, "approver_magic_token_expires", None)
         if expires and expires < datetime.utcnow():
             flash("This invite link has expired. Ask the Optimus team for a new one.", "danger")
             return redirect(url_for("approver.login"))
@@ -213,10 +222,14 @@ def onboard(token):
             flash("Passwords do not match.", "danger")
             return render_template("approver/onboard.html", token=token, name=u.name or u.email)
 
-        u.password_hash = generate_password_hash(pw1, method="pbkdf2:sha256")
-        u.magic_token = None
-        u.magic_token_expires = None
-        u.last_login = datetime.utcnow()
+        # Sets ONLY the approver-side password. The main OS1
+        # password_hash is intentionally left alone — a user who is
+        # both an Admin (or Associate) and an Approver can pick a
+        # different password here and their main login is preserved.
+        u.approver_password_hash = generate_password_hash(pw1, method="pbkdf2:sha256")
+        u.approver_magic_token = None
+        u.approver_magic_token_expires = None
+        u.approver_last_login = datetime.utcnow()
         s.commit()
         uid = u.id
 
