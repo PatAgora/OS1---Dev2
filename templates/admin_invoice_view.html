@@ -542,7 +542,6 @@
                     <th>W/C Date</th>
                     <th>Associate Name</th>
                     <th>Category</th>
-                    <th>Date</th>
                     <th class="r">Net Amount</th>
                     <th class="c">VAT %</th>
                     <th class="r">VAT Amount</th>
@@ -556,14 +555,13 @@
                     <td>W/C {{ row.wc.strftime('%d %b %Y') if row.wc else '—' }}</td>
                     <td>{{ row.associate or '' }}</td>
                     <td>{{ row.category or '' }}</td>
-                    <td>{{ row.date.strftime('%d %b %Y') if row.date else '—' }}</td>
                     <td class="r">£{{ "%.2f"|format((row.net or 0)|float) }}</td>
                     <td class="c">{% if is_mileage %}N/A{% else %}{{ "%.0f"|format(vp) }}%{% endif %}</td>
                     <td class="r">£{{ "%.2f"|format((row.vat_amount or 0)|float) }}</td>
                 </tr>
                 {% else %}
                 <tr>
-                    <td colspan="7" class="text-center text-muted py-3"><em>No expenses claimed in this period.</em></td>
+                    <td colspan="6" class="text-center text-muted py-3"><em>No expenses claimed in this period.</em></td>
                 </tr>
                 {% endfor %}
             </tbody>

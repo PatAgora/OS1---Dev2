@@ -4154,18 +4154,65 @@ def admin_view_invoice(invoice_id):
         except Exception:
             default_recipients = []
         # Re-derive the billing-detail schedule (Days Billed + Expenses
-        # Breakdown) so the on-screen view shows the same page-2 schedule
-        # as the PDF. Best-effort: silently skip if anything goes wrong
-        # — page 1 still renders.
+        # Breakdown) using the invoice's OWN persisted period bounds —
+        # not the engagement's current clamped period. The engagement
+        # could have been edited (start/end shifted) since this invoice
+        # was generated; we still want to show what was actually billed.
+        # Best-effort: log failures, page 1 still renders.
         schedule_days_billed = []
         schedule_expenses = []
         try:
-            if invoice.engagement_id and invoice.period_start:
-                _y = invoice.period_start.year
-                _m = invoice.period_start.month
-                _sched = _generate_invoice_payload(s, invoice.engagement_id, _y, _m)
-                schedule_days_billed = _sched.get("schedule_days_billed") or []
-                schedule_expenses = _sched.get("schedule_expenses") or []
+            if invoice.engagement_id and invoice.period_start and invoice.period_end:
+                ps = invoice.period_start
+                pe = invoice.period_end
+                ts_rows = s.execute(text(
+                    "SELECT id, user_id, billable_days, day_rate, period_start, "
+                    "       COALESCE(timesheet_type,'Standard') AS ts_type "
+                    "FROM timesheets "
+                    "WHERE engagement_id = :eid AND LOWER(status) = 'approved' "
+                    "AND period_start >= :ps AND period_end <= :pe "
+                    "ORDER BY period_start"
+                ).bindparams(eid=invoice.engagement_id, ps=ps, pe=pe)).all()
+                # Associate name lookup.
+                cand_ids = list({r.user_id for r in ts_rows if r.user_id})
+                names_map = {}
+                if cand_ids:
+                    ct = tuple(cand_ids) if len(cand_ids) > 1 else (cand_ids[0], cand_ids[0])
+                    for cid, nm in s.execute(text(
+                        "SELECT id, name FROM candidates WHERE id IN :ids"
+                    ).bindparams(ids=ct)).all():
+                        names_map[cid] = nm
+                for r in ts_rows:
+                    schedule_days_billed.append({
+                        "wc": r.period_start,
+                        "associate": names_map.get(r.user_id, "(unknown)"),
+                        "role": "Adjustment" if (r.ts_type or "Standard") == "Adjustment" else "Day rate",
+                        "day_rate": float(r.day_rate or 0),
+                        "days_billed": float(r.billable_days or 0),
+                        "net_amount": float((r.billable_days or 0) * (r.day_rate or 0)),
+                    })
+                if ts_rows:
+                    ts_ids = tuple(r.id for r in ts_rows)
+                    if len(ts_ids) == 1:
+                        ts_ids = (ts_ids[0], ts_ids[0])
+                    ts_wc_by_id = {r.id: r.period_start for r in ts_rows}
+                    ts_user_by_id = {r.id: r.user_id for r in ts_rows}
+                    exp_rows = s.execute(text(
+                        "SELECT te.timesheet_id, te.expense_type, te.amount, "
+                        "       te.vat_rate_pct, te.vat_amount, te.date_of_expense "
+                        "FROM timesheet_expenses te "
+                        "WHERE te.timesheet_id IN :ids"
+                    ).bindparams(ids=ts_ids)).all()
+                    for x in exp_rows:
+                        schedule_expenses.append({
+                            "wc": ts_wc_by_id.get(x.timesheet_id),
+                            "associate": names_map.get(ts_user_by_id.get(x.timesheet_id), "(unknown)"),
+                            "category": x.expense_type or "Expenses",
+                            "date": x.date_of_expense,
+                            "net": float(x.amount or 0),
+                            "vat_pct": float(x.vat_rate_pct or 0),
+                            "vat_amount": float(x.vat_amount or 0),
+                        })
         except Exception:
             current_app.logger.exception("admin_view_invoice: schedule recompute failed")
         return render_template(
