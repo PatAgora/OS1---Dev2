@@ -3307,7 +3307,20 @@ def admin_invoices():
             except Exception:
                 continue
 
+        # Per-invoice default recipient list — drives the Send modal's
+        # pre-populated email field on this listing page. Comma-joined
+        # string keyed by invoice.id so the template can drop it
+        # straight into data-* attributes / JS.
+        default_recipients_by_invoice = {}
+        for inv in invoices:
+            try:
+                default_recipients_by_invoice[inv.id] = ", ".join(
+                    _invoice_recipients_default(inv) or []
+                )
+            except Exception:
+                default_recipients_by_invoice[inv.id] = ""
         return render_template("admin_invoices.html",
+            default_recipients_by_invoice=default_recipients_by_invoice,
             invoices=invoices,
             draft_count=len(draft_invoices),
             draft_amount=sum(i.total_amount or 0 for i in draft_invoices),
@@ -3505,28 +3518,60 @@ def _invoice_recipients_default(invoice) -> list[str]:
                 return arr
         except Exception:
             pass
-    # 2) Client-level. Look up via (a) FK, then (b) name (case-insensitive).
+    # 2) Client-level. Try multiple lookup paths so a name drift between
+    # the engagement's free-text client and the Client row can't silently
+    # break the pre-populate. Order:
+    #   (a) Engagement.client_id FK (cleanest, when populated)
+    #   (b) Case-insensitive name match against Engagement.client
+    #   (c) Case-insensitive name match against Invoice.client_name
+    #       (snapshotted at generation; covers engagements created before
+    #       the Client entity existed)
     client = None
-    if eng is not None:
+    sess = None
+    try:
+        from sqlalchemy.orm import object_session
+        sess = object_session(eng) if eng is not None else None
+        if sess is None:
+            # invoice itself is always attached to its session.
+            sess = object_session(invoice)
+    except Exception:
+        sess = None
+    if sess is not None:
         try:
-            from sqlalchemy.orm import object_session
-            sess = object_session(eng)
-            if sess is not None:
-                cid = getattr(eng, "client_id", None)
-                if cid:
-                    client = sess.get(Client, cid)
-                if client is None and (getattr(eng, "client", None) or "").strip():
-                    nm = (eng.client or "").strip()
-                    # Case-insensitive name match — works on Postgres
-                    # (LOWER) and SQLite (LOWER) identically.
-                    client = sess.scalars(
-                        select(Client).where(
-                            func.lower(func.trim(Client.name)) == nm.lower()
-                        )
-                    ).first()
+            cid = getattr(eng, "client_id", None) if eng is not None else None
+            if cid:
+                client = sess.get(Client, cid)
         except Exception:
             client = None
-    if client and getattr(client, "invoice_recipient_emails", None):
+        candidates_names = []
+        if eng is not None and (getattr(eng, "client", None) or "").strip():
+            candidates_names.append(eng.client.strip())
+        if (getattr(invoice, "client_name", None) or "").strip():
+            candidates_names.append(invoice.client_name.strip())
+        for nm in candidates_names:
+            if client and (client.invoice_recipient_emails or "").strip():
+                break   # already have a usable hit
+            try:
+                hit = sess.scalars(
+                    select(Client).where(
+                        func.lower(func.trim(Client.name)) == nm.lower()
+                    )
+                ).first()
+                if hit is not None:
+                    # Auto-backfill the FK if we resolved a Client by name
+                    # so subsequent calls hit the cheap FK path. Best-
+                    # effort — wrap in try/except so a read route never
+                    # bombs on a write failure.
+                    if eng is not None and not getattr(eng, "client_id", None):
+                        try:
+                            eng.client_id = hit.id
+                            sess.flush()
+                        except Exception:
+                            pass
+                    client = hit
+            except Exception:
+                pass
+    if client and (getattr(client, "invoice_recipient_emails", None) or "").strip():
         return [e.strip() for e in _re.split(r"[,;\s]+", client.invoice_recipient_emails)
                 if e.strip() and "@" in e]
     return []

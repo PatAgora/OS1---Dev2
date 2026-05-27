@@ -538,7 +538,8 @@
                         <a href="{{ url_for('admin_edit_invoice', invoice_id=inv.id) }}" class="action-btn" title="Edit"><i class="fas fa-edit"></i></a>
                         <a href="{{ url_for('admin_invoice_pdf', invoice_id=inv.id) }}" class="action-btn" title="Download PDF"><i class="fas fa-file-pdf"></i></a>
                         <button type="button" class="action-btn" title="Email Invoice" style="background:#dbeafe;color:#1e40af;"
-                           onclick="openSendModal('{{ inv.id }}', '{{ inv.invoice_number }}', '£{{ '%.2f'|format(inv.total_amount or 0) }}')">
+                           data-default-recipients="{{ (default_recipients_by_invoice or {}).get(inv.id, '')|e }}"
+                           onclick="openSendModal('{{ inv.id }}', '{{ inv.invoice_number }}', '£{{ '%.2f'|format(inv.total_amount or 0) }}', this.dataset.defaultRecipients)">
                             <i class="fas fa-envelope"></i>
                         </button>
                         {% if inv.status == 'Draft' %}
@@ -702,8 +703,10 @@ document.addEventListener('DOMContentLoaded', function() {
       <div class="modal-body">
         <p id="sendInvoiceInfo" class="text-muted mb-3"></p>
         <div class="mb-3">
-          <label class="form-label fw-semibold" for="sendEmail">Recipient Email Address</label>
-          <input type="email" class="form-control" id="sendEmail" name="email" placeholder="client@company.com" required>
+          <label class="form-label fw-semibold" for="sendEmail">Recipient Email Address(es)</label>
+          <input type="text" class="form-control" id="sendEmail" name="recipient_emails"
+                 placeholder="client@company.com, finance@company.com" required>
+          <div id="sendEmailHelp" class="form-text"></div>
         </div>
         <div class="alert alert-info py-2" style="font-size:0.85rem;">
           <i class="fas fa-paperclip me-1"></i> The invoice PDF will be generated and attached automatically.
@@ -718,10 +721,18 @@ document.addEventListener('DOMContentLoaded', function() {
 </div>
 
 <script>
-function openSendModal(invoiceId, invoiceNumber, amount) {
+function openSendModal(invoiceId, invoiceNumber, amount, defaultRecipients) {
   document.getElementById('sendInvoiceForm').action = '/admin/invoices/' + invoiceId + '/send';
   document.getElementById('sendInvoiceInfo').textContent = 'Send ' + invoiceNumber + ' (' + amount + ') with PDF attachment.';
-  document.getElementById('sendEmail').value = '';
+  var emailInput = document.getElementById('sendEmail');
+  var helpText = document.getElementById('sendEmailHelp');
+  var defaults = (defaultRecipients || '').trim();
+  emailInput.value = defaults;
+  if (helpText) {
+    helpText.textContent = defaults
+      ? "Pre-populated from the client / engagement's saved recipient list — edit if you need to override for this send."
+      : "No default recipients on file for this client. Add one or more — comma-separated.";
+  }
   new bootstrap.Modal(document.getElementById('sendInvoiceModal')).show();
 }
 </script>
