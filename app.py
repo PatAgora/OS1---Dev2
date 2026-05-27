@@ -5665,12 +5665,31 @@ def admin_clients_new():
     return redirect(url_for("admin_clients"))
 
 
-@app.route("/admin/clients/<int:client_id>/edit", methods=["POST"])
+@app.route("/admin/clients/<int:client_id>/edit", methods=["GET", "POST"])
 @login_required
 def admin_clients_edit(client_id: int):
     guard = _require_admin()
     if guard:
         return guard
+    if request.method == "GET":
+        with Session(engine) as s:
+            c = s.get(Client, client_id)
+            if not c:
+                abort(404)
+            # Detach-safe snapshot for the template.
+            client_data = {
+                "id": c.id, "name": c.name or "",
+                "client_code": c.client_code or "",
+                "code_confirmed": bool(c.code_confirmed),
+                "billing_address_line1": c.billing_address_line1 or "",
+                "billing_address_line2": c.billing_address_line2 or "",
+                "billing_city": c.billing_city or "",
+                "billing_postcode": c.billing_postcode or "",
+                "company_reg": c.company_reg or "",
+                "vat_number": c.vat_number or "",
+                "invoice_recipient_emails": c.invoice_recipient_emails or "",
+            }
+        return render_template("admin_client_edit.html", client=client_data)
     with Session(engine) as s:
         c = s.get(Client, client_id)
         if not c:
