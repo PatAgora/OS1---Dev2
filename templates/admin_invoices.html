@@ -539,7 +539,9 @@
                         <a href="{{ url_for('admin_invoice_pdf', invoice_id=inv.id) }}" class="action-btn" title="Download PDF"><i class="fas fa-file-pdf"></i></a>
                         <button type="button" class="action-btn" title="Email Invoice" style="background:#dbeafe;color:#1e40af;"
                            data-default-recipients="{{ (default_recipients_by_invoice or {}).get(inv.id, '')|e }}"
-                           onclick="openSendModal('{{ inv.id }}', '{{ inv.invoice_number }}', '£{{ '%.2f'|format(inv.total_amount or 0) }}', this.dataset.defaultRecipients)">
+                           data-default-subject="{{ (default_subject_by_invoice or {}).get(inv.id, '')|e }}"
+                           data-default-body="{{ (default_body_by_invoice or {}).get(inv.id, '')|e }}"
+                           onclick="openSendModal('{{ inv.id }}', '{{ inv.invoice_number }}', '£{{ '%.2f'|format(inv.total_amount or 0) }}', this.dataset.defaultRecipients, this.dataset.defaultSubject, this.dataset.defaultBody)">
                             <i class="fas fa-envelope"></i>
                         </button>
                         {% if inv.status == 'Draft' %}
@@ -708,6 +710,17 @@ document.addEventListener('DOMContentLoaded', function() {
                  placeholder="client@company.com, finance@company.com" required>
           <div id="sendEmailHelp" class="form-text"></div>
         </div>
+        <div class="mb-3">
+          <label class="form-label fw-semibold" for="sendSubjectList">Subject</label>
+          <input type="text" class="form-control" id="sendSubjectList" name="email_subject" required>
+          <div class="form-text">Edit if you'd like a different subject line for this send.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-semibold" for="sendBodyList">Body</label>
+          <textarea class="form-control" id="sendBodyList" name="email_body" rows="8"
+                    placeholder="Leave blank to use the standard HTML template."></textarea>
+          <div class="form-text">Edit if you'd like a custom message; clear the field to fall back to the standard HTML template.</div>
+        </div>
         <div class="alert alert-info py-2" style="font-size:0.85rem;">
           <i class="fas fa-paperclip me-1"></i> The invoice PDF will be generated and attached automatically.
         </div>
@@ -721,7 +734,7 @@ document.addEventListener('DOMContentLoaded', function() {
 </div>
 
 <script>
-function openSendModal(invoiceId, invoiceNumber, amount, defaultRecipients) {
+function openSendModal(invoiceId, invoiceNumber, amount, defaultRecipients, defaultSubject, defaultBody) {
   document.getElementById('sendInvoiceForm').action = '/admin/invoices/' + invoiceId + '/send';
   document.getElementById('sendInvoiceInfo').textContent = 'Send ' + invoiceNumber + ' (' + amount + ') with PDF attachment.';
   var emailInput = document.getElementById('sendEmail');
@@ -733,6 +746,10 @@ function openSendModal(invoiceId, invoiceNumber, amount, defaultRecipients) {
       ? "Pre-populated from the client / engagement's saved recipient list — edit if you need to override for this send."
       : "No default recipients on file for this client. Add one or more — comma-separated.";
   }
+  var subjectInput = document.getElementById('sendSubjectList');
+  if (subjectInput) subjectInput.value = (defaultSubject || '').trim();
+  var bodyInput = document.getElementById('sendBodyList');
+  if (bodyInput) bodyInput.value = (defaultBody || '').trim();
   new bootstrap.Modal(document.getElementById('sendInvoiceModal')).show();
 }
 </script>

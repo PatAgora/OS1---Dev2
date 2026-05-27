@@ -3312,6 +3312,8 @@ def admin_invoices():
         # string keyed by invoice.id so the template can drop it
         # straight into data-* attributes / JS.
         default_recipients_by_invoice = {}
+        default_subject_by_invoice = {}
+        default_body_by_invoice = {}
         for inv in invoices:
             try:
                 default_recipients_by_invoice[inv.id] = ", ".join(
@@ -3319,8 +3321,18 @@ def admin_invoices():
                 )
             except Exception:
                 default_recipients_by_invoice[inv.id] = ""
+            try:
+                default_subject_by_invoice[inv.id] = _invoice_default_subject(inv)
+            except Exception:
+                default_subject_by_invoice[inv.id] = f"Invoice {inv.invoice_number or ''}".strip()
+            try:
+                default_body_by_invoice[inv.id] = _invoice_default_body_text(inv)
+            except Exception:
+                default_body_by_invoice[inv.id] = ""
         return render_template("admin_invoices.html",
             default_recipients_by_invoice=default_recipients_by_invoice,
+            default_subject_by_invoice=default_subject_by_invoice,
+            default_body_by_invoice=default_body_by_invoice,
             invoices=invoices,
             draft_count=len(draft_invoices),
             draft_amount=sum(i.total_amount or 0 for i in draft_invoices),
@@ -3495,6 +3507,79 @@ def _vat_band_label(treatment: str) -> str:
         "zero":        "Expenses (0% VAT)",
         "non_vatable": "Expenses (Non-VATable)",
     }.get(treatment, f"Expenses ({treatment})")
+
+
+def _invoice_default_subject(invoice) -> str:
+    """Standard send-invoice subject template:
+       "Invoice [INV-YYYY-MM-XXXXX-CC] – [Project Name] – [Month Year]"
+    Pre-populates the Send modal's Subject input; the admin can edit
+    before clicking Send. Falls back gracefully if any field is missing
+    so the modal never shows a blank subject."""
+    num = (getattr(invoice, "invoice_number", None) or "").strip()
+    project = (getattr(invoice, "engagement_name", None) or "").strip()
+    if not project and getattr(invoice, "engagement", None) is not None:
+        project = (getattr(invoice.engagement, "name", "") or "").strip()
+    month_year = ""
+    src_date = (
+        getattr(invoice, "period_start", None)
+        or getattr(invoice, "invoice_date", None)
+    )
+    if src_date is not None:
+        try:
+            month_year = src_date.strftime("%B %Y")
+        except Exception:
+            month_year = ""
+    bits = []
+    if num:
+        bits.append(num)
+    if project:
+        bits.append(project)
+    if month_year:
+        bits.append(month_year)
+    if bits:
+        return "Invoice " + " – ".join(bits)
+    return "Invoice"
+
+
+def _invoice_default_body_text(invoice) -> str:
+    """Plain-text default body for the Send modal's Body textarea.
+    Edited body wins when the user touches the field; otherwise the
+    route falls back to the rich HTML email template."""
+    num = (getattr(invoice, "invoice_number", None) or "").strip() or "(no number)"
+    client = (getattr(invoice, "client_name", None) or "").strip() or "the client"
+    project = (getattr(invoice, "engagement_name", None) or "").strip()
+    try:
+        amount = float(getattr(invoice, "total_amount", 0) or 0)
+    except Exception:
+        amount = 0.0
+    due = ""
+    if getattr(invoice, "due_date", None):
+        try:
+            due = invoice.due_date.strftime("%d %B %Y")
+        except Exception:
+            pass
+    terms = (getattr(invoice, "payment_terms", None) or "Net 30").strip()
+    lines = [
+        f"Dear {client},",
+        "",
+        f"Please find attached invoice {num} "
+        + (f"for {project} " if project else "")
+        + f"totalling £{amount:,.2f}.",
+        "",
+    ]
+    if due:
+        lines.append(f"Payment is due by {due} ({terms}).")
+        lines.append("")
+    lines += [
+        "Please reference the invoice number when making payment.",
+        "",
+        "If you have any queries, please reply to this email or contact "
+        "finance@optimussolutions.co.uk.",
+        "",
+        "Kind regards,",
+        "Optimus Finance",
+    ]
+    return "\n".join(lines)
 
 
 def _invoice_recipients_default(invoice) -> list[str]:
@@ -4292,6 +4377,14 @@ def admin_view_invoice(invoice_id):
             default_recipients = _invoice_recipients_default(invoice)
         except Exception:
             default_recipients = []
+        try:
+            default_subject = _invoice_default_subject(invoice)
+        except Exception:
+            default_subject = f"Invoice {invoice.invoice_number or ''}".strip()
+        try:
+            default_body = _invoice_default_body_text(invoice)
+        except Exception:
+            default_body = ""
         # Re-derive the billing-detail schedule (Days Billed + Expenses
         # Breakdown) using the invoice's OWN persisted period bounds —
         # not the engagement's current clamped period. The engagement
@@ -4406,6 +4499,8 @@ def admin_view_invoice(invoice_id):
             default_recipients=default_recipients,
             schedule_days_billed=schedule_days_billed,
             schedule_expenses=schedule_expenses,
+            default_subject=default_subject,
+            default_body=default_body,
         )
 
 @app.route("/admin/invoices/<int:invoice_id>/edit", methods=["GET", "POST"])
@@ -5417,10 +5512,24 @@ def admin_send_invoice(invoice_id):
             flash("No client email found. Please enter at least one recipient.", "warning")
             return redirect(url_for('admin_view_invoice', invoice_id=invoice_id))
 
-        subject = (request.form.get("email_subject") or f"Invoice {invoice.invoice_number} — Optimus").strip()
+        # IR 27 — Subject defaults to the standard template
+        # "Invoice [INV-…] – [Project Name] – [Month Year]"; the modal
+        # pre-fills the same value and the admin can edit before sending.
+        subject = (request.form.get("email_subject") or _invoice_default_subject(invoice)).strip()
         body = (request.form.get("email_body") or "").strip()
-        # Use editable body if provided, otherwise the default templated HTML.
-        final_html = body or email_html
+        # If the admin edited the body, use it (HTML-escaped paragraph
+        # form so plain-text edits render readably). Otherwise fall back
+        # to the rich HTML email template.
+        if body:
+            import html as _html
+            final_html = (
+                '<div style="font-family:\'Inter\',Arial,sans-serif;'
+                'white-space:pre-wrap;color:#1f2937;font-size:14px;line-height:1.6;">'
+                + _html.escape(body)
+                + "</div>"
+            )
+        else:
+            final_html = email_html
 
         # Req 53 / IR 27 — invoice emails come from finance@. Send to
         # each recipient individually and track outcomes so a partial
