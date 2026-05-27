@@ -1409,6 +1409,24 @@ Following your offer of engagement with Optimus, the next step is to complete ou
       </form>
     </div>
 
+    {# PDF retention — central config, drives the nightly cleanup cron #}
+    <div class="mb-3 p-3" style="background:#f8fafc;border-radius:8px;border:1px solid #e5e7eb;">
+      <h6 class="mb-2"><i class="fas fa-file-pdf me-1 text-primary"></i>Invoice PDF Retention</h6>
+      <p class="text-muted small mb-2">How long generated + sent invoice PDFs are kept in the document store. The nightly cleanup cron deletes any PDF older than this. Default is 2555 days (7 years) — adjust per your tax-record retention policy.</p>
+      <form method="POST" action="{{ url_for('admin_update_pdf_retention_days') }}" class="row g-2 align-items-end">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="next" value="taxonomy_manage">
+        <div class="col-md-3">
+          <label class="form-label small fw-semibold">Retention (days)</label>
+          <input type="number" name="pdf_retention_days" class="form-control form-control-sm"
+                 step="1" min="30" max="36500" value="{{ pdf_retention_days }}" required>
+        </div>
+        <div class="col-md-3">
+          <button type="submit" class="btn btn-primary btn-sm"><i class="fas fa-save me-1"></i> Save retention</button>
+        </div>
+      </form>
+    </div>
+
     {# HMRC mileage rate — central config, used by every Mileage-flagged category #}
     <div class="mb-4 p-3" style="background:#f8fafc;border-radius:8px;border:1px solid #e5e7eb;">
       <h6 class="mb-2"><i class="fas fa-road me-1 text-primary"></i>HMRC Mileage Rate</h6>

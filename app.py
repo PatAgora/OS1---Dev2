@@ -6772,7 +6772,7 @@ def admin_update_hmrc_mileage_rate():
     if guard:
         return guard
     nxt = (request.form.get("next") or "").strip()
-    redir = url_for("taxonomy_manage") if nxt == "taxonomy_manage" else url_for("admin_company_settings")
+    redir = url_for("taxonomy_manage")
     try:
         new_rate = float(request.form.get("hmrc_mileage_rate") or "")
     except ValueError:
@@ -6818,7 +6818,7 @@ def admin_update_default_vat_rate():
     if guard:
         return guard
     nxt = (request.form.get("next") or "").strip()
-    redir = url_for("taxonomy_manage") if nxt == "taxonomy_manage" else url_for("admin_company_settings")
+    redir = url_for("taxonomy_manage")
     try:
         new_rate = float(request.form.get("default_vat_rate") or "")
     except ValueError:
@@ -7004,50 +7004,61 @@ def admin_expense_categories_delete(cat_id: int):
 
 
 # ---- Company Settings ----
+#
+# The dedicated /admin/company-settings page was retired — all three of
+# its fields (HMRC Mileage Rate, Default VAT Rate, PDF Retention Days)
+# now live on /taxonomy/manage as small dedicated sub-cards. Each has
+# its own focused POST route below. This collapses the admin's settings
+# surface to a single page with a single sidebar entry (Configuration).
 
-@app.route("/admin/company-settings", methods=["GET", "POST"])
+
+@app.route("/admin/company-settings/pdf-retention-days", methods=["POST"])
 @login_required
-def admin_company_settings():
-    """Central Optimus company settings — HMRC mileage rate, PDF retention
-    period, default VAT rate. Phase 9 will add Optimus's own bank/registered
-    address details here for IR 5 (today those still live in invoice_settings
-    JSON — that table stays as the existing invoice template's settings)."""
+def admin_update_pdf_retention_days():
+    """IR 42 — update only the PDF retention period in company_settings,
+    so the Expense Categories tile on /taxonomy/manage can save it without
+    a separate Company Settings page. Honours ?next=taxonomy_manage.
+    The nightly pdf_retention_cleanup cron picks up the new value on its
+    next run; no redeploy needed."""
     guard = _require_admin()
     if guard:
         return guard
-    settings = _company_settings()
-    if request.method == "POST":
+    nxt = (request.form.get("next") or "").strip()
+    redir = url_for("taxonomy_manage") if nxt == "taxonomy_manage" else url_for("taxonomy_manage")
+    try:
+        new_days = int(request.form.get("pdf_retention_days") or "")
+    except ValueError:
+        flash("PDF retention period must be a whole number of days.", "warning")
+        return redirect(redir)
+    if new_days < 30:
+        flash("PDF retention period must be at least 30 days.", "warning")
+        return redirect(redir)
+    if new_days > 36500:
+        flash("PDF retention period can't exceed 36,500 days (100 years).", "warning")
+        return redirect(redir)
+    try:
+        settings = _company_settings()
+        old_days = settings.get("pdf_retention_days")
+        settings["pdf_retention_days"] = new_days
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as c:
+            row = c.execute(text("SELECT id FROM company_settings ORDER BY id LIMIT 1")).first()
+            if row:
+                c.execute(text("UPDATE company_settings SET config = :cfg WHERE id = :id")
+                          .bindparams(cfg=json.dumps(settings), id=row[0]))
+            else:
+                c.execute(text("INSERT INTO company_settings (config) VALUES (:cfg)")
+                          .bindparams(cfg=json.dumps(settings)))
+        flash(f"Invoice PDF retention updated to {new_days} days.", "success")
         try:
-            settings["hmrc_mileage_rate"] = float(request.form.get("hmrc_mileage_rate") or settings.get("hmrc_mileage_rate", 0.45))
-        except (TypeError, ValueError):
+            log_audit_event("update", "config",
+                            f"PDF retention days changed: {old_days} -> {new_days}",
+                            "company_settings", 0,
+                            {"pdf_retention_days_old": old_days, "pdf_retention_days_new": new_days})
+        except Exception:
             pass
-        try:
-            settings["pdf_retention_days"] = int(request.form.get("pdf_retention_days") or settings.get("pdf_retention_days", 2555))
-        except (TypeError, ValueError):
-            pass
-        try:
-            settings["default_vat_rate"] = float(request.form.get("default_vat_rate") or settings.get("default_vat_rate", 20))
-        except (TypeError, ValueError):
-            pass
-        try:
-            with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as c:
-                row = c.execute(text("SELECT id FROM company_settings ORDER BY id LIMIT 1")).first()
-                if row:
-                    c.execute(text("UPDATE company_settings SET config = :cfg WHERE id = :id")
-                              .bindparams(cfg=json.dumps(settings), id=row[0]))
-                else:
-                    c.execute(text("INSERT INTO company_settings (config) VALUES (:cfg)")
-                              .bindparams(cfg=json.dumps(settings)))
-            flash("Company settings saved.", "success")
-            try:
-                log_audit_event("update", "config", "Company settings updated",
-                                "company_settings", 0, settings)
-            except Exception:
-                pass
-        except Exception as e:
-            flash(f"Failed to save settings: {e}", "danger")
-        return redirect(url_for("admin_company_settings"))
-    return render_template("admin_company_settings.html", settings=settings)
+    except Exception as exc:
+        flash(f"Failed to save PDF retention: {exc}", "danger")
+    return redirect(redir)
 
 
 @app.route("/admin/workflow-stages")
@@ -31295,6 +31306,13 @@ def taxonomy_manage():
         default_vat_rate = float(_company_settings().get("default_vat_rate", 20))
     except Exception:
         default_vat_rate = 20.0
+    # IR 42 — PDF retention period for invoice PDFs in the Document
+    # store. Default 7 years (2555 days). The nightly pdf_retention_cleanup
+    # cron deletes copies older than this.
+    try:
+        pdf_retention_days = int(_company_settings().get("pdf_retention_days", 2555))
+    except Exception:
+        pdf_retention_days = 2555
 
     # Leave reasons for config page
     leave_reasons_list = []
@@ -31546,7 +31564,8 @@ Optimus - Financial Services Resourcing Specialists"""
                            vetting_expiry_config=vetting_expiry_config,
                            expense_categories=expense_categories_list,
                            hmrc_mileage_rate=hmrc_mileage_rate,
-                           default_vat_rate=default_vat_rate)
+                           default_vat_rate=default_vat_rate,
+                           pdf_retention_days=pdf_retention_days)
 
 @app.route("/taxonomy/category/add", methods=["POST"])
 @login_required
