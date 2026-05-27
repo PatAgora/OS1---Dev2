@@ -3487,7 +3487,13 @@ def _vat_band_label(treatment: str) -> str:
 def _invoice_recipients_default(invoice) -> list[str]:
     """Resolve the default recipient list for an invoice's send modal.
     Preference: engagement.invoice_recipient_emails (JSON array) →
-    client.invoice_recipient_emails (comma/newline string) → []."""
+    client.invoice_recipient_emails (comma/newline string) → [].
+
+    The client lookup tries (1) Engagement.client_id FK, (2) case-
+    insensitive Engagement.client name match — so a name like
+    "Agora Consulting" still finds a Client row saved as
+    " agora consulting " (case / whitespace differences). The Send
+    modal renders whichever list this returns, comma-joined."""
     import json as _json, re as _re
     eng = getattr(invoice, "engagement", None)
     # 1) Engagement-level (JSON array) — most specific override.
@@ -3499,16 +3505,25 @@ def _invoice_recipients_default(invoice) -> list[str]:
                 return arr
         except Exception:
             pass
-    # 2) Client-level (free-text comma/newline list).
-    client = getattr(eng, "client_obj", None) if eng else None
-    if client is None and eng and getattr(eng, "client", None):
+    # 2) Client-level. Look up via (a) FK, then (b) name (case-insensitive).
+    client = None
+    if eng is not None:
         try:
             from sqlalchemy.orm import object_session
             sess = object_session(eng)
             if sess is not None:
-                client = sess.scalars(
-                    select(Client).where(Client.name == eng.client)
-                ).first()
+                cid = getattr(eng, "client_id", None)
+                if cid:
+                    client = sess.get(Client, cid)
+                if client is None and (getattr(eng, "client", None) or "").strip():
+                    nm = (eng.client or "").strip()
+                    # Case-insensitive name match — works on Postgres
+                    # (LOWER) and SQLite (LOWER) identically.
+                    client = sess.scalars(
+                        select(Client).where(
+                            func.lower(func.trim(Client.name)) == nm.lower()
+                        )
+                    ).first()
         except Exception:
             client = None
     if client and getattr(client, "invoice_recipient_emails", None):
