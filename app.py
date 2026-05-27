@@ -3217,6 +3217,7 @@ def admin_invoices():
                     ]
                 autogen_tiles.append({
                     "engagement_id": eng.id,
+                    "engagement_ref": getattr(eng, "ref", "") or "",
                     "engagement_name": eng.name or "",
                     "client_name": eng.client or "",
                     "approved": approved,
