@@ -462,6 +462,12 @@
             <i class="fas fa-calendar-minus"></i><span>Leave Requests</span>
           </a>
           {% endif %}
+          {% if view_exists('admin_clients') %}
+          <a href="{{ url_for('admin_clients') }}"
+             class="{% if request.endpoint == 'admin_clients' %}active{% endif %}">
+            <i class="fas fa-building"></i><span>Clients</span>
+          </a>
+          {% endif %}
           {% if view_exists('admin_invoices') %}
           <a href="{{ url_for('admin_invoices') }}"
              class="{% if request.endpoint in ['admin_invoices', 'admin_invoice_view', 'admin_invoice_generate'] %}active{% endif %}">

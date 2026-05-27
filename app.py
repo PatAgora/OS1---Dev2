@@ -3730,16 +3730,28 @@ def _next_invoice_number(s, engagement) -> str:
     if engagement is None:
         raise ValueError("Engagement is required to generate an invoice number.")
     client = getattr(engagement, "client_rel", None)
+    # Auto-link on the fly when the engagement carries a free-text
+    # client name but was never run through create_engagement /
+    # engagement_edit (so _ensure_client_linked was never invoked).
+    # This means an admin who saved a project before the Client table
+    # existed — or via a non-form path — doesn't have to manually link
+    # before generating. The Client row will land as code_confirmed=False
+    # which the next check still catches with the "needs admin review"
+    # message, with a clear pointer to /admin/clients.
+    if (client is None or not getattr(client, "client_code", "")) and (engagement.client or "").strip():
+        client = _ensure_client_linked(s, engagement)
+        s.flush()
     if client is None or not getattr(client, "client_code", ""):
         raise ValueError(
-            "This engagement is not linked to a Client. "
-            "Link a client via /admin/clients (or the engagement edit form) "
-            "before generating an invoice."
+            "This engagement has no Client name on it yet. "
+            "Open the engagement and set a Client, then try again."
         )
     if not getattr(client, "code_confirmed", False):
         raise ValueError(
-            f"The client code {client.client_code!r} is still flagged for review. "
-            f"Visit /admin/clients, confirm the code is correct, then re-try."
+            f"The auto-generated client code {client.client_code!r} for "
+            f"\"{client.name}\" still needs an Admin to confirm it before "
+            f"invoices can be generated. Go to /admin/clients, review the "
+            f"code, click Confirm, then re-try."
         )
 
     # Atomic advance + read. Postgres supports UPDATE…RETURNING natively;
