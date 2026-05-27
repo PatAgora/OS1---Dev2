@@ -547,16 +547,23 @@
                         {% if inv.status == 'Draft' %}
                         <form method="POST" action="{{ url_for('admin_update_invoice_status', invoice_id=inv.id) }}" class="d-inline">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <input type="hidden" name="status" value="Pending">
+                            <input type="hidden" name="status" value="Sent">
                             <button type="submit" class="action-btn" title="Mark as Sent"><i class="fas fa-paper-plane"></i></button>
                         </form>
                         {% endif %}
-                        {% if inv.status != 'Paid' %}
+                        {% if inv.status not in ['Paid', 'Void'] %}
                         <form method="POST" action="{{ url_for('admin_update_invoice_status', invoice_id=inv.id) }}" class="d-inline">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <input type="hidden" name="status" value="Paid">
                             <button type="submit" class="action-btn" title="Mark as Paid" style="background:#dcfce7;color:#166534;"><i class="fas fa-check-circle"></i></button>
                         </form>
+                        {% endif %}
+                        {% if inv.status not in ['Void', 'Paid'] %}
+                        <button type="button" class="action-btn" title="Void Invoice"
+                                style="background:#fee2e2;color:#991b1b;"
+                                onclick="openVoidModal('{{ inv.id }}', '{{ inv.invoice_number }}', '£{{ '%.2f'|format(inv.total_amount or 0) }}')">
+                            <i class="fas fa-ban"></i>
+                        </button>
                         {% endif %}
                     </td>
                 </tr>
@@ -751,6 +758,50 @@ function openSendModal(invoiceId, invoiceNumber, amount, defaultRecipients, defa
   var bodyInput = document.getElementById('sendBodyList');
   if (bodyInput) bodyInput.value = (defaultBody || '').trim();
   new bootstrap.Modal(document.getElementById('sendInvoiceModal')).show();
+}
+</script>
+
+<!-- Void Invoice Modal — shared across rows; openVoidModal() populates target -->
+<div class="modal fade" id="voidInvoiceModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <form class="modal-content" method="POST" id="voidInvoiceForm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fas fa-ban me-2 text-danger"></i>Void Invoice</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-danger">
+          <strong>Are you sure you want to void this invoice?</strong>
+          <span id="voidInvoiceTarget"></span>
+          Voiding marks the row as cancelled. It will be excluded from
+          all financial summaries and aged reports, the invoice number
+          is NOT released back to the sequence (numbers are never
+          reused per IR 6), and the tile will reappear in
+          "Ready to generate" so a replacement can be raised.
+        </div>
+        <div class="mb-3">
+          <label for="voidReasonList" class="form-label fw-semibold">Reason <span class="text-danger">*</span></label>
+          <textarea name="void_reason" id="voidReasonList" class="form-control" rows="3" required
+                    placeholder="e.g. Wrong client billed; replacement issued as INV-…"></textarea>
+          <div class="form-text">The reason is recorded against the invoice and the audit log.</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="submit" class="btn btn-danger"><i class="fas fa-ban me-1"></i> Void Invoice</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+function openVoidModal(invoiceId, invoiceNumber, amount) {
+  document.getElementById('voidInvoiceForm').action = '/admin/invoices/' + invoiceId + '/void';
+  document.getElementById('voidInvoiceTarget').textContent =
+    ' ' + invoiceNumber + ' (' + amount + ') will be marked as Void.';
+  document.getElementById('voidReasonList').value = '';
+  new bootstrap.Modal(document.getElementById('voidInvoiceModal')).show();
 }
 </script>
 </div>
