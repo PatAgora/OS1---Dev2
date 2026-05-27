@@ -3378,6 +3378,39 @@ def _vat_band_label(treatment: str) -> str:
     }.get(treatment, f"Expenses – {treatment}")
 
 
+def _invoice_recipients_default(invoice) -> list[str]:
+    """Resolve the default recipient list for an invoice's send modal.
+    Preference: engagement.invoice_recipient_emails (JSON array) →
+    client.invoice_recipient_emails (comma/newline string) → []."""
+    import json as _json, re as _re
+    eng = getattr(invoice, "engagement", None)
+    # 1) Engagement-level (JSON array) — most specific override.
+    if eng and getattr(eng, "invoice_recipient_emails", None):
+        try:
+            arr = _json.loads(eng.invoice_recipient_emails) or []
+            arr = [str(x).strip() for x in arr if str(x).strip()]
+            if arr:
+                return arr
+        except Exception:
+            pass
+    # 2) Client-level (free-text comma/newline list).
+    client = getattr(eng, "client_obj", None) if eng else None
+    if client is None and eng and getattr(eng, "client", None):
+        try:
+            from sqlalchemy.orm import object_session
+            sess = object_session(eng)
+            if sess is not None:
+                client = sess.scalars(
+                    select(Client).where(Client.name == eng.client)
+                ).first()
+        except Exception:
+            client = None
+    if client and getattr(client, "invoice_recipient_emails", None):
+        return [e.strip() for e in _re.split(r"[,;\s]+", client.invoice_recipient_emails)
+                if e.strip() and "@" in e]
+    return []
+
+
 def _engagement_billing_block(eng) -> dict:
     """IR 1, 10 — return the client billing block as a flat dict for the
     invoice generator, PDF renderer, and view template. Always returns a
@@ -4056,6 +4089,12 @@ def admin_view_invoice(invoice_id):
             billing_block = _engagement_billing_block(invoice.engagement)
         except Exception:
             billing_block = {}
+        # Pre-populate the send-email modal with the engagement / client
+        # default recipient list, so the admin doesn't have to look it up.
+        try:
+            default_recipients = _invoice_recipients_default(invoice)
+        except Exception:
+            default_recipients = []
         return render_template(
             "admin_invoice_view.html",
             invoice=invoice,
@@ -4063,6 +4102,7 @@ def admin_view_invoice(invoice_id):
             overridden_fields=overridden_fields,
             settings=settings,
             billing_block=billing_block,
+            default_recipients=default_recipients,
         )
 
 @app.route("/admin/invoices/<int:invoice_id>/edit", methods=["GET", "POST"])
@@ -4094,7 +4134,9 @@ def admin_edit_invoice(invoice_id):
                 "engagement_name": invoice.engagement_name,
                 "notes": invoice.notes,
                 "payment_terms": invoice.payment_terms,
+                "invoice_date": invoice.invoice_date.strftime("%Y-%m-%d") if invoice.invoice_date else "",
                 "due_date": invoice.due_date.strftime("%Y-%m-%d") if invoice.due_date else "",
+                "purchase_order_number": (getattr(invoice.engagement, "purchase_order_number", "") or "") if invoice.engagement else "",
                 "line_items": invoice.line_items or "[]",
                 "vat_rate": invoice.vat_rate,
                 "subtotal": invoice.subtotal,
@@ -4108,6 +4150,14 @@ def admin_edit_invoice(invoice_id):
             invoice.notes = request.form.get("notes", "")
             invoice.payment_terms = request.form.get("payment_terms", "Net 30")
 
+            # Parse invoice date — editable per IR override.
+            invoice_date_str = request.form.get("invoice_date", "")
+            if invoice_date_str:
+                try:
+                    invoice.invoice_date = datetime.datetime.strptime(invoice_date_str, "%Y-%m-%d")
+                except Exception:
+                    pass
+
             # Parse due date
             due_date_str = request.form.get("due_date", "")
             if due_date_str:
@@ -4115,6 +4165,13 @@ def admin_edit_invoice(invoice_id):
                     invoice.due_date = datetime.datetime.strptime(due_date_str, "%Y-%m-%d")
                 except:
                     pass
+
+            # PO Number lives on the Engagement (it's the same PO for any
+            # invoice raised against that project), so writing it back here
+            # keeps the engagement billing card and PDF in sync.
+            po_new = (request.form.get("purchase_order_number") or "").strip()
+            if invoice.engagement is not None and po_new != (invoice.engagement.purchase_order_number or ""):
+                invoice.engagement.purchase_order_number = po_new
 
             # Get line items
             line_items = []
@@ -4150,7 +4207,9 @@ def admin_edit_invoice(invoice_id):
                 "engagement_name": invoice.engagement_name,
                 "notes": invoice.notes,
                 "payment_terms": invoice.payment_terms,
+                "invoice_date": invoice.invoice_date.strftime("%Y-%m-%d") if invoice.invoice_date else "",
                 "due_date": invoice.due_date.strftime("%Y-%m-%d") if invoice.due_date else "",
+                "purchase_order_number": (getattr(invoice.engagement, "purchase_order_number", "") or "") if invoice.engagement else "",
                 "line_items": invoice.line_items or "[]",
                 "vat_rate": invoice.vat_rate,
                 "subtotal": invoice.subtotal,
@@ -4187,8 +4246,13 @@ def admin_edit_invoice(invoice_id):
         # GET - show edit form
         line_items = json.loads(invoice.line_items) if invoice.line_items else []
         engagements = s.scalars(select(Engagement).order_by(Engagement.name)).all()
+        try:
+            billing_block = _engagement_billing_block(invoice.engagement)
+        except Exception:
+            billing_block = {}
         return render_template("admin_invoice_edit.html", invoice=invoice,
-                             line_items=line_items, engagements=engagements)
+                             line_items=line_items, engagements=engagements,
+                             billing_block=billing_block)
 
 
 @app.route("/admin/invoices/<int:invoice_id>/reopen", methods=["POST"])

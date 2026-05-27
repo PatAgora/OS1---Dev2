@@ -103,10 +103,22 @@
                         </div>
                     </div>
                     <div class="row">
-                        <div class="col-md-6 mb-3">
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Invoice Date</label>
+                            <input type="date" class="form-control" name="invoice_date"
+                                   value="{{ invoice.invoice_date.strftime('%Y-%m-%d') if invoice.invoice_date else '' }}">
+                        </div>
+                        <div class="col-md-4 mb-3">
                             <label class="form-label">Due Date</label>
-                            <input type="date" class="form-control" name="due_date" 
+                            <input type="date" class="form-control" name="due_date"
                                    value="{{ invoice.due_date.strftime('%Y-%m-%d') if invoice.due_date else '' }}">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">PO Number</label>
+                            <input type="text" class="form-control" name="purchase_order_number"
+                                   value="{{ (billing_block or {}).get('po') or '' }}"
+                                   placeholder="Client purchase order ref">
+                            <div class="form-text">Saved on the engagement — applies to any invoice raised against this project.</div>
                         </div>
                     </div>
                 </div>

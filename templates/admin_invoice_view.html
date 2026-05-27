@@ -478,8 +478,17 @@
       <div class="modal-body">
         <p class="text-muted mb-3">Send {{ invoice.invoice_number }} (£{{ "%.2f"|format((invoice.total_amount or 0)|float) }}) with PDF attachment.</p>
         <div class="mb-3">
-          <label class="form-label fw-semibold" for="sendEmail">Recipient Email Address</label>
-          <input type="email" class="form-control" id="sendEmail" name="email" placeholder="client@company.com" required>
+          <label class="form-label fw-semibold" for="sendRecipients">Recipient Email Address(es)</label>
+          <input type="text" class="form-control" id="sendRecipients" name="recipient_emails"
+                 value="{{ (default_recipients or [])|join(', ') }}"
+                 placeholder="client@company.com, finance@company.com" required>
+          <div class="form-text">
+            {% if default_recipients %}
+              Pre-populated from the client / engagement's saved recipient list — edit if you need to override for this send.
+            {% else %}
+              No default recipients on file for this client. Add one or more — comma-separated.
+            {% endif %}
+          </div>
         </div>
         <div class="alert alert-info py-2" style="font-size:0.85rem;">
           <i class="fas fa-paperclip me-1"></i> The invoice PDF will be generated and attached automatically.
