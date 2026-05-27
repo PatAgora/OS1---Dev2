@@ -5687,6 +5687,99 @@ def admin_resend_invoice(invoice_id: int):
     return redirect(url_for("admin_view_invoice", invoice_id=invoice_id))
 
 
+@app.route("/admin/engagements/<int:engagement_id>/invoices.zip")
+@login_required
+def admin_engagement_invoices_zip(engagement_id: int):
+    """End-of-engagement bulk download — stream every invoice raised
+    against this engagement as a single zip, one file per invoice
+    (latest persisted PDF, falling back to a live re-render when no
+    Document row exists). Filename: <engagement-ref>-invoices.zip.
+    Admin-only."""
+    guard = _require_admin()
+    if guard:
+        return guard
+    import io as _io, zipfile as _zipfile, re as _re, json as _json
+    with Session(engine) as s:
+        eng = s.get(Engagement, engagement_id)
+        if not eng:
+            abort(404)
+        invoices = s.scalars(
+            select(Invoice)
+            .where(Invoice.engagement_id == engagement_id)
+            .order_by(Invoice.invoice_date.asc())
+        ).all()
+        if not invoices:
+            flash("No invoices have been raised for this engagement yet.", "warning")
+            return redirect(url_for("edit_engagement", eng_id=engagement_id))
+
+        buf = _io.BytesIO()
+        zip_failures = []
+        with _zipfile.ZipFile(buf, "w", _zipfile.ZIP_DEFLATED) as zf:
+            for inv in invoices:
+                # Latest persisted PDF for this invoice — prefer the
+                # 'invoice_generated' / 'invoice_sent' Document attached
+                # to the engagement whose original_name matches the
+                # invoice number. If none exists (legacy invoice never
+                # persisted, or files cleaned up), fall back to a live
+                # re-render so the admin still gets a complete zip.
+                pdf_bytes = None
+                try:
+                    doc = s.execute(text(
+                        "SELECT id, filename FROM documents "
+                        "WHERE engagement_id = :eid "
+                        "  AND doc_type LIKE 'invoice_%' "
+                        "  AND original_name LIKE :pat "
+                        "ORDER BY uploaded_at DESC LIMIT 1"
+                    ).bindparams(eid=engagement_id,
+                                 pat=f"{inv.invoice_number}-%.pdf")).first()
+                    if doc and doc.filename:
+                        path = os.path.join(UPLOAD_FOLDER, doc.filename)
+                        if os.path.exists(path):
+                            with open(path, "rb") as fh:
+                                pdf_bytes = fh.read()
+                except Exception:
+                    pdf_bytes = None
+                if not pdf_bytes:
+                    try:
+                        line_items = _json.loads(inv.line_items) if inv.line_items else []
+                        pdf_bytes = _generate_invoice_pdf(inv, line_items)
+                    except Exception as e:
+                        zip_failures.append(f"{inv.invoice_number}: {type(e).__name__}")
+                        continue
+                # Safe entry name — strip any odd chars that aren't
+                # invoice-number friendly.
+                safe_name = _re.sub(r"[^A-Za-z0-9._-]+", "-",
+                                    inv.invoice_number or f"invoice-{inv.id}")
+                zf.writestr(f"{safe_name}.pdf", pdf_bytes)
+
+        if zip_failures:
+            try:
+                current_app.logger.warning(
+                    "engagement %s invoice zip: skipped %d due to errors: %s",
+                    engagement_id, len(zip_failures), "; ".join(zip_failures))
+            except Exception:
+                pass
+
+        # Filename anchored on the engagement's ref (or its id if no ref).
+        eng_ref = (getattr(eng, "ref", "") or "").strip() or f"ENG-{eng.id}"
+        safe_ref = _re.sub(r"[^A-Za-z0-9._-]+", "-", eng_ref) or f"ENG-{eng.id}"
+        download_name = f"{safe_ref}-invoices.zip"
+        try:
+            log_audit_event("export", "billing",
+                            f"Engagement {eng_ref} bulk invoice zip ({len(invoices)} invoices)",
+                            "engagement", engagement_id,
+                            {"invoice_count": len(invoices), "failures": zip_failures})
+        except Exception:
+            pass
+
+    buf.seek(0)
+    return Response(
+        buf.getvalue(),
+        mimetype="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{download_name}"'},
+    )
+
+
 @app.route("/admin/invoices/export")
 @login_required
 def admin_export_invoices():
