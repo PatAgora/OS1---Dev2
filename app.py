@@ -4621,7 +4621,11 @@ def _generate_invoice_pdf(invoice, line_items):
     auto-populate from /admin/invoices/settings (invoice_settings)."""
     from fpdf import FPDF
 
-    NAVY = (30, 58, 138)
+    # NAVY matches the Optimus logo's background (RGB 3, 10, 29) so the
+    # header bar blends seamlessly with the embedded logo. NAVY_DARK is a
+    # slightly lifted shade kept for the GBP TOTAL band so it still reads
+    # as a distinct highlight panel against the header.
+    NAVY = (3, 10, 29)
     NAVY_DARK = (15, 23, 64)
     INK = (31, 41, 55)
     MUTED = (107, 114, 128)
