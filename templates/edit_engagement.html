@@ -226,16 +226,8 @@
       <label class="form-check-label" for="vatApplicable">VAT applies on invoices for this engagement (uncheck to zero-rate every line)</label>
     </div>
 
-    <div class="mt-4 d-flex gap-2 align-items-center flex-wrap">
+    <div class="mt-4">
       <button type="submit" class="btn btn-primary"><i class="fas fa-save me-1"></i>Save billing details</button>
-      {# End-of-engagement bulk download. Streams a single zip with one
-         PDF per invoice raised against this engagement (latest persisted
-         copy, falling back to a live re-render). Lives outside the Save
-         form so clicking it doesn't accidentally submit billing edits. #}
-      <a href="{{ url_for('admin_engagement_invoices_zip', engagement_id=engagement.id) }}"
-         class="btn btn-outline-secondary" title="Download every invoice for this engagement as a zip">
-        <i class="fas fa-file-archive me-1"></i>Download all invoices (.zip)
-      </a>
     </div>
   </div>
 </form>

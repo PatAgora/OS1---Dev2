@@ -751,6 +751,14 @@
         <a class="btn btn-modern-outline btn-sm" href="{{ url_for('engagement_plan', eng_id=engagement.id) }}">
           <i class="fas fa-sliders"></i> Edit Plan
         </a>
+        {# End-of-engagement bulk download — zip with one PDF per invoice
+           raised against this engagement (latest persisted, falling back
+           to a live re-render). #}
+        <a class="btn btn-modern-outline btn-sm"
+           href="{{ url_for('admin_engagement_invoices_zip', engagement_id=engagement.id) }}"
+           title="Download all invoices for this engagement as a zip">
+          <i class="fas fa-file-archive"></i> Download Invoices (.zip)
+        </a>
         <button class="btn btn-modern-outline btn-sm" id="btn-copy-link" data-link="{{ request.url }}">
           <i class="fas fa-share-nodes"></i> Share
         </button>
