@@ -1090,6 +1090,84 @@
         </div>
       </div>
 
+      <!-- Address History Card (Req 27 — 5-year coverage + Verifile tick) -->
+      <div class="modern-card mt-4 fade-in-up stagger-2" id="sec-address-history">
+        <div class="card-body p-4">
+          <div class="section-header">
+            <div class="section-title">
+              <i class="fas fa-map-marker-alt"></i>
+              Address History
+            </div>
+            <div class="section-subtitle">
+              {% if address_history %}
+                {{ address_history|length }} address{{ 'es' if address_history|length != 1 else '' }}
+                · {{ '%g'|format(address_history_total_years) }} year{{ 's' if address_history_total_years != 1 else '' }} covered
+                {% if address_history_meets_5y %}
+                  <span class="badge bg-success ms-2">5+ years</span>
+                {% else %}
+                  <span class="badge bg-warning text-dark ms-2" title="DBS / credit-check coverage typically needs 5 years">
+                    &lt; 5 years
+                  </span>
+                {% endif %}
+              {% else %}
+                <span class="text-muted">No addresses on file</span>
+              {% endif %}
+            </div>
+          </div>
+
+          {% if address_history %}
+          <div class="table-responsive mt-3">
+            <table class="table table-sm align-middle mb-0" style="font-size:0.85rem;">
+              <thead class="table-light">
+                <tr>
+                  <th style="min-width:240px;">Address</th>
+                  <th style="white-space:nowrap;">From</th>
+                  <th style="white-space:nowrap;">To</th>
+                  <th class="text-center" style="white-space:nowrap;"
+                      title="Tick = this address appears on the Verifile credit-check AddressList">
+                    Verifile Vetting Check
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for a in address_history %}
+                <tr>
+                  <td>
+                    <div>{{ a.line1 }}{% if a.line2 %}, {{ a.line2 }}{% endif %}</div>
+                    <div class="text-muted small">
+                      {{ a.city }}{% if a.postcode %} · {{ a.postcode }}{% endif %}{% if a.country and a.country != 'United Kingdom' %} · {{ a.country }}{% endif %}
+                    </div>
+                  </td>
+                  <td>{{ a.from_date.strftime('%d %b %Y') if a.from_date else '—' }}</td>
+                  <td>
+                    {% if a.is_current and not a.to_date %}
+                      <span class="badge bg-primary">Current</span>
+                    {% elif a.to_date %}
+                      {{ a.to_date.strftime('%d %b %Y') }}
+                    {% else %}—{% endif %}
+                  </td>
+                  <td class="text-center">
+                    {% if a.verifile_checked %}
+                      <i class="fas fa-check-circle text-success" title="Address verified against Verifile credit-check AddressList"></i>
+                    {% else %}
+                      <span class="text-muted" title="Not on Verifile's credit-check AddressList yet — extra check may be needed via the Verifile portal">—</span>
+                    {% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+          <p class="text-muted mt-2 mb-0">
+            The associate hasn't entered any address history yet via the
+            Associate Portal. Five years of address history is required to
+            run DBS and credit checks.
+          </p>
+          {% endif %}
+        </div>
+      </div>
+
       <!-- General Notes Card -->
       <div class="modern-card mt-4 fade-in-up stagger-2" id="sec-notes">
         <div class="card-body p-4">

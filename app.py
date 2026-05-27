@@ -26035,6 +26035,85 @@ def candidate_profile(cand_id: int):
     except Exception:
         pass
 
+    # ----- Address history tile data (Req 27 follow-up) -----
+    # Build per-row list with derived end-date and a "verifile_checked"
+    # tick — set when the address postcode appears in any of the
+    # AddressList entries we got back from Verifile's credit-check
+    # result. Also surface a total-years tally and a 5-year coverage
+    # flag so the template can show a quick "meets DBS / credit
+    # requirement" chip.
+    address_history_rows = []
+    address_history_total_years = 0.0
+    address_history_meets_5y = False
+    try:
+        with Session(engine) as _s_ah:
+            _ah_rows = _s_ah.execute(text(
+                "SELECT id, address_line1, address_line2, city, postcode, country, "
+                "       from_date, to_date, is_current "
+                "FROM address_history WHERE candidate_id = :cid "
+                "ORDER BY COALESCE(from_date, '1900-01-01') DESC"
+            ).bindparams(cid=cand_id)).all()
+            # Collect Verifile-known postcodes from any stored credit-check result.
+            _verifile_postcodes = set()
+            try:
+                for vc in _s_ah.scalars(
+                    select(VettingCheck).where(VettingCheck.candidate_id == cand_id)
+                ).all():
+                    ext = getattr(vc, "external_result", None) or getattr(vc, "result_payload", None)
+                    if not ext:
+                        continue
+                    review = _verifile_credit_address_review(ext)
+                    for addr_str in review.get("addresses", []):
+                        # Pull the last 5-10 chars that look like a UK postcode
+                        # so we can match against AddressHistory.postcode without
+                        # relying on full-string equality.
+                        import re as _re_ah
+                        m = _re_ah.search(
+                            r"\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b",
+                            addr_str.upper(),
+                        )
+                        if m:
+                            _verifile_postcodes.add(m.group(1).replace(" ", ""))
+            except Exception:
+                _verifile_postcodes = set()
+            _today = datetime.date.today()
+            _total_days = 0
+            for r in _ah_rows:
+                fd, td = r.from_date, r.to_date
+                is_current = bool(r.is_current)
+                td_eff = td or (_today if is_current else None)
+                if fd and td_eff:
+                    try:
+                        _total_days += max(0, (td_eff - fd).days)
+                    except Exception:
+                        pass
+                pc = (r.postcode or "").upper().replace(" ", "")
+                verifile_checked = bool(pc and pc in _verifile_postcodes)
+                full_line = ", ".join(
+                    p for p in (
+                        r.address_line1, r.address_line2, r.city,
+                        r.postcode, r.country,
+                    ) if p
+                )
+                address_history_rows.append({
+                    "id": r.id,
+                    "line1": r.address_line1 or "",
+                    "line2": r.address_line2 or "",
+                    "city": r.city or "",
+                    "postcode": r.postcode or "",
+                    "country": r.country or "",
+                    "from_date": fd,
+                    "to_date": td,
+                    "is_current": is_current,
+                    "full_line": full_line,
+                    "verifile_checked": verifile_checked,
+                })
+            address_history_total_years = round(_total_days / 365.25, 1)
+            address_history_meets_5y = (_total_days >= 5 * 365)
+    except Exception:
+        current_app.logger.exception("address_history tile: build failed")
+        address_history_rows, address_history_total_years, address_history_meets_5y = [], 0.0, False
+
     return render_template(
         "candidate_profile.html",
         appn=latest_app,            # can be None
@@ -26066,6 +26145,10 @@ def candidate_profile(cand_id: int):
         cand_applied_apps=cand_applied_apps,
         context=ctx if ctx.get("stage") else None,
 
+        # Address history tile data — populated below before render.
+        address_history=address_history_rows,
+        address_history_total_years=address_history_total_years,
+        address_history_meets_5y=address_history_meets_5y,
         # === New wireframe data ===
         vetting_checks=vetting_checks,
         vetting_summary=vetting_summary,
