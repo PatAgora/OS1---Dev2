@@ -542,29 +542,43 @@
                     <th>W/C Date</th>
                     <th>Associate Name</th>
                     <th>Category</th>
+                    <th>Date</th>
                     <th class="r">Net Amount</th>
                     <th class="c">VAT %</th>
                     <th class="r">VAT Amount</th>
                 </tr>
             </thead>
             <tbody>
-                {% for row in schedule_expenses %}
+                {% for row in (schedule_expenses or [])|sort(attribute='wc') %}
                 {% set vp = (row.vat_pct or 0)|float %}
                 {% set is_mileage = 'ileage' in (row.category or '') and vp == 0 %}
                 <tr>
                     <td>W/C {{ row.wc.strftime('%d %b %Y') if row.wc else '—' }}</td>
                     <td>{{ row.associate or '' }}</td>
                     <td>{{ row.category or '' }}</td>
+                    <td>{{ row.date.strftime('%d %b %Y') if row.date else '—' }}</td>
                     <td class="r">£{{ "%.2f"|format((row.net or 0)|float) }}</td>
                     <td class="c">{% if is_mileage %}N/A{% else %}{{ "%.0f"|format(vp) }}%{% endif %}</td>
                     <td class="r">£{{ "%.2f"|format((row.vat_amount or 0)|float) }}</td>
                 </tr>
                 {% else %}
                 <tr>
-                    <td colspan="6" class="text-center text-muted py-3"><em>No expenses claimed in this period.</em></td>
+                    <td colspan="7" class="text-center text-muted py-3"><em>No expenses claimed in this period.</em></td>
                 </tr>
                 {% endfor %}
             </tbody>
+            {% if schedule_expenses %}
+            <tfoot>
+                {% set tot_net = schedule_expenses|sum(attribute='net') %}
+                {% set tot_vat = schedule_expenses|sum(attribute='vat_amount') %}
+                <tr style="background:#f3f4f6; font-weight:600;">
+                    <td colspan="4" class="r">Totals</td>
+                    <td class="r">£{{ "%.2f"|format(tot_net|float) }}</td>
+                    <td class="c"></td>
+                    <td class="r">£{{ "%.2f"|format(tot_vat|float) }}</td>
+                </tr>
+            </tfoot>
+            {% endif %}
         </table>
     </div>
 </div>
