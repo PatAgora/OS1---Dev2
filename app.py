@@ -3180,6 +3180,13 @@ def admin_invoices():
                 import calendar as _cal
                 ms = datetime.date(year, month, 1)
                 me = datetime.date(year, month, _cal.monthrange(year, month)[1])
+                # Hide tiles for engagements that already have a non-Void
+                # invoice for this calendar month — the spec says the tile
+                # should disappear once Generate has been clicked. If the
+                # invoice is later deleted or voided, _existing_invoice_for_month
+                # returns None again and the tile reappears automatically.
+                if _existing_invoice_for_month(s, eng.id, year, month) is not None:
+                    continue
                 # Expected = (active associates on this engagement during
                 # the month) * (Mondays in the month). E.g. 10 people on
                 # a project for May 2026 (4 Mondays) -> 40 expected.
