@@ -4255,20 +4255,62 @@ def admin_view_invoice(invoice_id):
                 # Associate name lookup.
                 cand_ids = list({r.user_id for r in ts_rows if r.user_id})
                 names_map = {}
+                cand_role_v = {}     # candidate_id -> role_type ("Team Leader" etc)
+                cand_charge_v = {}   # candidate_id -> EngagementPlan.charge_rate
                 if cand_ids:
                     ct = tuple(cand_ids) if len(cand_ids) > 1 else (cand_ids[0], cand_ids[0])
                     for cid, nm in s.execute(text(
                         "SELECT id, name FROM candidates WHERE id IN :ids"
                     ).bindparams(ids=ct)).all():
                         names_map[cid] = nm
+                    # Mirror _generate_invoice_payload's role + charge-rate
+                    # lookups so page 2 shows the role title (Team Leader,
+                    # Officer, ...) and the bill-out rate, not the
+                    # generic "Day rate" + pay rate from the timesheet.
+                    try:
+                        for rr in s.execute(text(
+                            "SELECT a.candidate_id, j.role_type, a.created_at "
+                            "FROM applications a "
+                            "JOIN jobs j ON j.id = a.job_id "
+                            "WHERE a.candidate_id IN :ids "
+                            "  AND j.engagement_id = :eid "
+                            "  AND a.status IN ('Placed','Contract Signed','On Assignment','Active','Contracted','Hired') "
+                            "ORDER BY a.candidate_id, a.created_at DESC"
+                        ).bindparams(ids=ct, eid=invoice.engagement_id)).all():
+                            if rr.candidate_id not in cand_role_v and rr.role_type:
+                                cand_role_v[rr.candidate_id] = rr.role_type
+                    except Exception:
+                        cand_role_v = {}
+                    plan_cache_v = {}
+                    for cid_x, role in cand_role_v.items():
+                        if role not in plan_cache_v:
+                            try:
+                                p = s.execute(text(
+                                    "SELECT charge_rate FROM engagement_plans "
+                                    "WHERE engagement_id = :eid AND role_type = :rt "
+                                    "ORDER BY version_int DESC LIMIT 1"
+                                ).bindparams(eid=invoice.engagement_id, rt=role)).first()
+                                plan_cache_v[role] = float(p.charge_rate) if (p and p.charge_rate) else None
+                            except Exception:
+                                plan_cache_v[role] = None
+                        cr = plan_cache_v.get(role)
+                        if cr:
+                            cand_charge_v[cid_x] = cr
                 for r in ts_rows:
+                    is_adjustment = (r.ts_type or "Standard") == "Adjustment"
+                    role_label = cand_role_v.get(r.user_id) or "Day rate"
+                    # Bill at the charge_rate from EngagementPlan; fall
+                    # back to the timesheet's pay rate only when no plan
+                    # exists for that role on this engagement.
+                    charge_rate = cand_charge_v.get(r.user_id) or float(r.day_rate or 0)
+                    days = float(r.billable_days or 0)
                     schedule_days_billed.append({
                         "wc": r.period_start,
                         "associate": names_map.get(r.user_id, "(unknown)"),
-                        "role": "Adjustment" if (r.ts_type or "Standard") == "Adjustment" else "Day rate",
-                        "day_rate": float(r.day_rate or 0),
-                        "days_billed": float(r.billable_days or 0),
-                        "net_amount": float((r.billable_days or 0) * (r.day_rate or 0)),
+                        "role": "Adjustment" if is_adjustment else role_label,
+                        "day_rate": charge_rate,
+                        "days_billed": days,
+                        "net_amount": days * charge_rate,
                     })
                 if ts_rows:
                     ts_ids = tuple(r.id for r in ts_rows)
