@@ -152,11 +152,13 @@
             </option>
             {% endfor %}
           </select>
-          <button type="button" class="btn btn-outline-primary" onclick="document.getElementById('inlineClientForm').style.display = document.getElementById('inlineClientForm').style.display==='none'?'':'none';">
+        </div>
+        <div class="form-text mt-1">
+          <button type="button" class="btn btn-link btn-sm p-0 align-baseline"
+                  onclick="document.getElementById('inlineClientForm').style.display = document.getElementById('inlineClientForm').style.display==='none'?'':'none';">
             <i class="fas fa-plus me-1"></i>Add new client
           </button>
         </div>
-        <div class="form-text">Required before invoices can be generated. <a href="{{ url_for('admin_clients') }}" target="_blank">Manage clients →</a></div>
       </div>
       <div class="col-md-4">
         <label class="form-label fw-semibold">Purchase Order Number</label>
