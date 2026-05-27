@@ -4339,278 +4339,507 @@ def admin_delete_invoice(invoice_id):
     
     return redirect(url_for('admin_invoices'))
 
-def _generate_invoice_pdf(invoice, line_items):
-    """Generate an invoice PDF using fpdf2. Returns bytes."""
-    from fpdf import FPDF
-
-    def _safe(text):
-        """Replace unicode chars that latin-1 can't handle."""
-        return (text or "").replace("\u2014", "-").replace("\u2013", "-").replace("\u2018", "'").replace("\u2019", "'").replace("\u201c", '"').replace("\u201d", '"').replace("\u2026", "...").replace("\u00a3", "GBP ")
-
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=20)
-
-    # Phase 11 / IR 30 — Optimus brand header. Logo image at top-left
-    # (uses the existing static asset). The brand navy is #030a1d / RGB
-    # (3, 10, 29); the secondary navy is #1e3a8a / RGB (30, 58, 138).
+def _load_invoice_settings() -> dict:
+    """Return the invoice_settings JSON as a dict. Falls back to the
+    Example-invoice-correct defaults so a brand-new install renders a
+    valid PDF without admin intervention."""
+    fallback = {
+        "company_name": "OPTIMUS OPERATIONS LIMITED",
+        "company_address": "71-75 Shelton Street, Covent Garden, London, WC2H 9JQ",
+        "vat_number": "512492018",
+        "company_reg": "16889424",
+        "account_name": "",
+        "bank_name": "",
+        "account_number": "",
+        "sort_code": "",
+    }
     try:
-        _logo_path = os.path.join(os.path.dirname(__file__), "static", "images", "optimus-logo-header-new.png")
-        if os.path.exists(_logo_path):
-            pdf.image(_logo_path, x=10, y=10, h=14)
+        with engine.connect() as c:
+            row = c.execute(text("SELECT config FROM invoice_settings LIMIT 1")).first()
+            if row and row[0]:
+                cfg = json.loads(row[0])
+                for k, v in fallback.items():
+                    cfg.setdefault(k, v)
+                return cfg
     except Exception:
         pass
+    return fallback
 
-    # Header text — block aligned to the right of the logo.
-    pdf.set_xy(60, 10)
-    pdf.set_font("Helvetica", "B", 24)
-    pdf.set_text_color(30, 58, 138)
-    pdf.cell(80, 12, "INVOICE", new_x="RIGHT")
-    pdf.set_font("Helvetica", "B", 14)
-    pdf.set_text_color(31, 41, 55)
-    pdf.cell(0, 12, invoice.invoice_number or "", align="R", new_x="LMARGIN", new_y="NEXT")
-    pdf.set_x(60)
-    pdf.set_font("Helvetica", "", 10)
-    pdf.set_text_color(107, 114, 128)
-    pdf.cell(80, 6, "Optimus Operations Limited", new_x="RIGHT")
-    date_str = invoice.invoice_date.strftime("%d %B %Y") if invoice.invoice_date else "N/A"
-    pdf.cell(0, 6, f"Date: {date_str}", align="R", new_x="LMARGIN", new_y="NEXT")
-    if invoice.due_date:
-        pdf.cell(100, 6, "", new_x="RIGHT")
-        pdf.cell(0, 6, f"Due: {invoice.due_date.strftime('%d %B %Y')}", align="R", new_x="LMARGIN", new_y="NEXT")
-    pdf.cell(100, 6, "", new_x="RIGHT")
-    pdf.cell(0, 6, f"Status: {invoice.status}", align="R", new_x="LMARGIN", new_y="NEXT")
 
-    # Divider
-    pdf.set_draw_color(30, 58, 138)
-    pdf.set_line_width(0.8)
-    pdf.line(10, pdf.get_y() + 4, 200, pdf.get_y() + 4)
-    pdf.ln(12)
+def _generate_invoice_pdf(invoice, line_items):
+    """Render the invoice PDF to match Example invoice.pdf. Returns
+    bytes. Page 1 = navy header bar + Client / Optimus columns + meta
+    + line items + totals box + Payment Details. Page 2 = Billing
+    Detail Schedule (Days Billed + Expenses Breakdown). Bank details
+    auto-populate from /admin/invoices/settings (invoice_settings)."""
+    from fpdf import FPDF
 
-    # Bill To / Payment Terms — IR 10 — full client billing block sourced
-    # from the engagement record (address, postcode, company reg, VAT,
-    # purchase-order). Falls back to the legacy single-line client_name
-    # when the engagement isn't reachable (e.g. orphaned legacy invoice).
+    NAVY = (30, 58, 138)
+    NAVY_DARK = (15, 23, 64)
+    INK = (31, 41, 55)
+    MUTED = (107, 114, 128)
+    LIGHT_GREY = (229, 231, 235)
+
+    def _safe(t):
+        return (t or "").replace("\u2014", "-").replace("\u2013", "-").replace("\u2018", "'").replace("\u2019", "'").replace("\u201c", '"').replace("\u201d", '"').replace("\u2026", "...").replace("\u00a3", "GBP ")
+
+    settings = _load_invoice_settings()
     bb = _engagement_billing_block(getattr(invoice, "engagement", None))
+    project_name = invoice.engagement_name or (
+        getattr(invoice.engagement, "name", "") if getattr(invoice, "engagement", None) else ""
+    ) or ""
+    purchase_order = bb.get("po") or ""
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=20)
+    pdf.add_page()
+
+    # ----- HEADER BAR -----
+    pdf.set_fill_color(*NAVY)
+    pdf.rect(0, 0, 210, 22, style="F")
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 22)
+    pdf.set_xy(12, 6)
+    pdf.cell(80, 12, "OPTIMUS")
+    pdf.set_font("Helvetica", "B", 18)
+    pdf.set_xy(160, 6)
+    pdf.cell(40, 12, "Invoice", align="R")
+    pdf.set_y(28)
+
+    # ----- CLIENT / FROM columns -----
+    col_left_x = 12
+    col_right_x = 110
     pdf.set_font("Helvetica", "", 8)
-    pdf.set_text_color(107, 114, 128)
-    pdf.cell(95, 5, "BILL TO", new_x="RIGHT")
-    pdf.cell(0, 5, "PAYMENT TERMS", new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.set_text_color(31, 41, 55)
-    pdf.cell(95, 7, _safe(bb["company_name"] or invoice.client_name or ""), new_x="RIGHT")
-    pdf.cell(0, 7, _safe(invoice.payment_terms or "Net 30"), new_x="LMARGIN", new_y="NEXT")
+    pdf.set_text_color(*MUTED)
+    pdf.set_xy(col_left_x, 30)
+    pdf.cell(90, 5, "CLIENT BILLING ADDRESS")
+    pdf.set_xy(col_right_x, 30)
+    pdf.cell(90, 5, "FROM")
+
+    cy_left = 36
     pdf.set_font("Helvetica", "", 10)
-    pdf.set_text_color(107, 114, 128)
-    if invoice.engagement_name:
-        pdf.cell(0, 6, _safe(invoice.engagement_name), new_x="LMARGIN", new_y="NEXT")
-    for line in (bb["addr1"], bb["addr2"]):
-        if line:
-            pdf.cell(0, 6, _safe(line), new_x="LMARGIN", new_y="NEXT")
-    city_postcode = " ".join(p for p in (bb["city"], bb["postcode"]) if p).strip()
+    pdf.set_text_color(*INK)
+    company = bb.get("company_name") or invoice.client_name or ""
+    for line in [company, bb.get("addr1") or "", bb.get("addr2") or ""]:
+        if line.strip():
+            pdf.set_xy(col_left_x, cy_left)
+            pdf.cell(90, 5, _safe(line))
+            cy_left += 5
+    city_postcode = " ".join(p for p in (bb.get("city"), bb.get("postcode")) if p).strip()
     if city_postcode:
-        pdf.cell(0, 6, _safe(city_postcode), new_x="LMARGIN", new_y="NEXT")
-    if bb["company_reg"]:
-        pdf.cell(0, 6, _safe(f"Company Reg: {bb['company_reg']}"), new_x="LMARGIN", new_y="NEXT")
-    if bb["vat_number"]:
-        pdf.cell(0, 6, _safe(f"VAT Number: {bb['vat_number']}"), new_x="LMARGIN", new_y="NEXT")
-    if bb["po"]:
-        pdf.cell(0, 6, _safe(f"PO Number: {bb['po']}"), new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(10)
+        pdf.set_xy(col_left_x, cy_left)
+        pdf.cell(90, 5, _safe(city_postcode))
+        cy_left += 5
+    if bb.get("vat_number"):
+        cy_left += 3
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_text_color(*MUTED)
+        pdf.set_xy(col_left_x, cy_left)
+        pdf.cell(90, 4, "CLIENT VAT NUMBER")
+        cy_left += 5
+        pdf.set_font("Helvetica", "", 10)
+        pdf.set_text_color(*INK)
+        pdf.set_xy(col_left_x, cy_left)
+        pdf.cell(90, 5, _safe(bb["vat_number"]))
+        cy_left += 5
+    if bb.get("company_reg"):
+        cy_left += 2
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_text_color(*MUTED)
+        pdf.set_xy(col_left_x, cy_left)
+        pdf.cell(90, 4, "CLIENT COMPANY REG")
+        cy_left += 5
+        pdf.set_font("Helvetica", "", 10)
+        pdf.set_text_color(*INK)
+        pdf.set_xy(col_left_x, cy_left)
+        pdf.cell(90, 5, _safe(bb["company_reg"]))
+        cy_left += 5
 
-    # Line items table header
-    pdf.set_fill_color(248, 250, 252)
-    pdf.set_font("Helvetica", "B", 9)
-    pdf.set_text_color(55, 65, 81)
-    pdf.cell(95, 8, "  Description", border="B", fill=True, new_x="RIGHT")
-    pdf.cell(25, 8, "Qty", border="B", fill=True, align="C", new_x="RIGHT")
-    pdf.cell(35, 8, "Rate", border="B", fill=True, align="R", new_x="RIGHT")
-    pdf.cell(35, 8, "Amount", border="B", fill=True, align="R", new_x="LMARGIN", new_y="NEXT")
-
-    # Line items
+    cy_right = 36
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_text_color(*INK)
+    pdf.set_xy(col_right_x, cy_right)
+    pdf.cell(90, 5, _safe(settings.get("company_name", "OPTIMUS OPERATIONS LIMITED")))
+    cy_right += 5
     pdf.set_font("Helvetica", "", 10)
-    pdf.set_text_color(31, 41, 55)
+    pdf.set_text_color(*INK)
+    addr = settings.get("company_address", "") or ""
+    for part in addr.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        pdf.set_xy(col_right_x, cy_right)
+        pdf.cell(90, 5, _safe(part))
+        cy_right += 5
+    if settings.get("vat_number"):
+        pdf.set_xy(col_right_x, cy_right)
+        pdf.cell(90, 5, _safe(f"VAT Number: {settings['vat_number']}"))
+        cy_right += 5
+    if settings.get("company_reg"):
+        pdf.set_xy(col_right_x, cy_right)
+        pdf.cell(90, 5, _safe(f"Company Reg: {settings['company_reg']}"))
+        cy_right += 5
+
+    pdf.set_y(max(cy_left, cy_right) + 4)
+    pdf.set_draw_color(*LIGHT_GREY)
+    pdf.set_line_width(0.3)
+    pdf.line(12, pdf.get_y(), 198, pdf.get_y())
+    pdf.ln(4)
+
+    # ----- META ROW -----
+    meta_y = pdf.get_y()
+    col_w = 46
+    headers = ["Project Name", "Invoice Date", "Purchase Order Number", "Invoice Number"]
+    pdf.set_font("Helvetica", "", 8)
+    pdf.set_text_color(*MUTED)
+    for i, h in enumerate(headers):
+        pdf.set_xy(12 + i * col_w, meta_y)
+        pdf.cell(col_w, 5, h)
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_text_color(*INK)
+    invoice_date_str = invoice.invoice_date.strftime("%d %b %Y") if invoice.invoice_date else ""
+    values = [project_name, invoice_date_str, purchase_order, invoice.invoice_number or ""]
+    for i, v in enumerate(values):
+        pdf.set_xy(12 + i * col_w, meta_y + 6)
+        pdf.cell(col_w, 6, _safe(v))
+    pdf.set_y(meta_y + 14)
+
+    if invoice.period_start and invoice.period_end:
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_text_color(*MUTED)
+        pdf.set_xy(12, pdf.get_y())
+        pdf.cell(46, 5, "Invoice Period")
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_text_color(*INK)
+        pdf.set_xy(58, pdf.get_y())
+        pdf.cell(140, 5, _safe(
+            f"{invoice.period_start.strftime('%d %b %Y')} to {invoice.period_end.strftime('%d %b %Y')}"
+        ))
+        pdf.ln(8)
+    else:
+        pdf.ln(2)
+
+    # ----- LINE ITEMS TABLE -----
+    col_widths = [72, 24, 22, 28, 16, 24]
+    headers = ["ROLE / DESCRIPTION", "DAY RATE", "UNITS", "NET AMOUNT", "VAT %", "VAT AMOUNT"]
+    aligns = ["L", "R", "C", "R", "C", "R"]
+    pdf.set_y(pdf.get_y() + 4)
+    table_y = pdf.get_y()
+    pdf.set_fill_color(*NAVY)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 9)
+    x = 12
+    for i, h in enumerate(headers):
+        pdf.set_xy(x, table_y)
+        pdf.cell(col_widths[i], 8,
+                 ("  " + h) if aligns[i] == "L" else h,
+                 align=aligns[i], fill=True)
+        x += col_widths[i]
+    pdf.set_y(table_y + 8)
+
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(*INK)
     for item in line_items:
-        desc = _safe((item.get("description") or "")[:60])
-        qty = str(item.get("quantity", ""))
-        rate = f"£{item['rate']:,.2f}" if item.get("rate") else ""
-        amount = f"£{(item.get('amount') or 0):,.2f}"
-        pdf.cell(95, 8, f"  {desc}", border="B", new_x="RIGHT")
-        pdf.cell(25, 8, qty, border="B", align="C", new_x="RIGHT")
-        pdf.cell(35, 8, rate, border="B", align="R", new_x="RIGHT")
-        pdf.cell(35, 8, amount, border="B", align="R", new_x="LMARGIN", new_y="NEXT")
+        row_y = pdf.get_y()
+        desc = item.get("description") or ""
+        item_type = item.get("type") or ""
+        qty = item.get("quantity") or 0
+        rate = item.get("rate") or 0
+        amount = item.get("amount") or 0
+        vat_pct = item.get("vat_pct")
+        vat_amount = item.get("vat_amount") or 0
+        if item_type == "expense_band":
+            day_rate_str = "-"
+            units_str = "-"
+        else:
+            day_rate_str = f"GBP {rate:,.2f}" if rate else ""
+            units_str = f"{qty:g} Days" if qty else ""
+        net_str = f"GBP {amount:,.2f}"
+        if vat_pct is None:
+            vat_pct_str = ""
+        elif (vat_pct or 0) == 0 and "Non-VATable" in desc:
+            vat_pct_str = "N/A"
+        else:
+            vat_pct_str = f"{vat_pct:.0f}%"
+        vat_amt_str = f"GBP {vat_amount:,.2f}"
+        desc_short = _safe(desc[:60])
+        x = 12
+        row_vals = [desc_short, day_rate_str, units_str, net_str, vat_pct_str, vat_amt_str]
+        for i, v in enumerate(row_vals):
+            pdf.set_xy(x, row_y)
+            pdf.cell(col_widths[i], 7,
+                     ("  " + v) if aligns[i] == "L" else v,
+                     border="B", align=aligns[i])
+            x += col_widths[i]
+        pdf.set_y(row_y + 7)
 
     if not line_items:
-        pdf.set_text_color(156, 163, 175)
-        pdf.cell(190, 10, "No line items", align="C", new_x="LMARGIN", new_y="NEXT")
-        pdf.set_text_color(31, 41, 55)
+        pdf.set_text_color(*MUTED)
+        pdf.set_font("Helvetica", "I", 9)
+        pdf.cell(sum(col_widths), 8, "  No line items", border="B", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_text_color(*INK)
 
-    pdf.ln(6)
+    pdf.ln(4)
 
-    # Totals — right aligned
-    x_label = 130
-    x_val = 165
-    pdf.set_font("Helvetica", "", 10)
-    pdf.set_text_color(107, 114, 128)
-    pdf.set_x(x_label)
-    pdf.cell(35, 7, "Subtotal", new_x="RIGHT")
-    pdf.cell(35, 7, f"£{(invoice.subtotal or 0):,.2f}", align="R", new_x="LMARGIN", new_y="NEXT")
-    pdf.set_x(x_label)
-    pdf.cell(35, 7, f"VAT ({invoice.vat_rate or 0:.1f}%)", new_x="RIGHT")
-    pdf.cell(35, 7, f"£{(invoice.vat_amount or 0):,.2f}", align="R", new_x="LMARGIN", new_y="NEXT")
-
-    # Total line
-    pdf.set_draw_color(30, 58, 138)
-    pdf.line(x_label, pdf.get_y() + 2, 200, pdf.get_y() + 2)
-    pdf.ln(6)
-    pdf.set_font("Helvetica", "B", 14)
-    pdf.set_text_color(31, 41, 55)
-    pdf.set_x(x_label)
-    pdf.cell(35, 9, "Total", new_x="RIGHT")
-    pdf.cell(35, 9, f"£{(invoice.total_amount or 0):,.2f}", align="R", new_x="LMARGIN", new_y="NEXT")
-
-    # Notes
-    if invoice.notes:
-        pdf.ln(12)
-        pdf.set_draw_color(229, 231, 235)
-        pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-        pdf.ln(6)
-        pdf.set_font("Helvetica", "B", 10)
-        pdf.set_text_color(55, 65, 81)
-        pdf.cell(0, 6, "Notes", new_x="LMARGIN", new_y="NEXT")
-        pdf.set_font("Helvetica", "", 9)
-        pdf.set_text_color(107, 114, 128)
-        pdf.multi_cell(0, 5, _safe(invoice.notes))
-
-    # IR 12 — mandated payment instruction.
-    pdf.ln(12)
-    pdf.set_draw_color(229, 231, 235)
-    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-    pdf.ln(6)
+    # ----- TOTALS BOX -----
+    box_left = 110
+    box_right = 198
+    half = (box_right - box_left) * 0.5
     pdf.set_font("Helvetica", "B", 10)
-    pdf.set_text_color(55, 65, 81)
-    pdf.cell(0, 6, "Payment Instructions", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_text_color(*INK)
+    pdf.set_xy(box_left, pdf.get_y())
+    pdf.cell(half, 7, "Net Total", align="R")
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(half, 7, f"GBP {(invoice.subtotal or 0):,.2f}", align="R", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_xy(box_left, pdf.get_y())
+    pdf.cell(half, 7, "VAT", align="R")
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(half, 7, f"GBP {(invoice.vat_amount or 0):,.2f}", align="R", new_x="LMARGIN", new_y="NEXT")
+    total_y = pdf.get_y() + 1
+    pdf.set_fill_color(*NAVY_DARK)
+    pdf.rect(box_left, total_y, box_right - box_left, 9, style="F")
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_xy(box_left, total_y)
+    pdf.cell(half, 9, "GBP TOTAL", align="R")
+    pdf.cell(half, 9, f"GBP {(invoice.total_amount or 0):,.2f}", align="R")
+    pdf.set_y(total_y + 13)
+
+    # ----- DUE DATE -----
+    if invoice.due_date:
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_text_color(*MUTED)
+        pdf.set_xy(12, pdf.get_y())
+        pdf.cell(30, 6, "Due Date")
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_text_color(*INK)
+        pdf.set_xy(42, pdf.get_y())
+        pdf.cell(140, 6, _safe(invoice.due_date.strftime("%d %b %Y")))
+        pdf.ln(8)
+
+    pdf.set_draw_color(*LIGHT_GREY)
+    pdf.line(12, pdf.get_y(), 198, pdf.get_y())
+    pdf.ln(5)
+
+    # ----- PAYMENT DETAILS -----
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_text_color(*NAVY)
+    pdf.cell(0, 6, "PAYMENT DETAILS", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(2)
+    y0 = pdf.get_y()
+    pdf.set_font("Helvetica", "", 8)
+    pdf.set_text_color(*MUTED)
+    pdf.set_xy(12, y0)
+    pdf.cell(35, 5, "Account Name")
+    pdf.set_xy(110, y0)
+    pdf.cell(20, 5, "Bank")
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(*INK)
+    pdf.set_xy(50, y0)
+    pdf.cell(55, 5, _safe(settings.get("account_name", "")))
+    pdf.set_xy(135, y0)
+    pdf.cell(60, 5, _safe(settings.get("bank_name", "")))
+
+    y1 = y0 + 7
+    pdf.set_font("Helvetica", "", 8)
+    pdf.set_text_color(*MUTED)
+    pdf.set_xy(12, y1)
+    pdf.cell(35, 5, "Account Number")
+    pdf.set_xy(110, y1)
+    pdf.cell(20, 5, "Sort Code")
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(*INK)
+    pdf.set_xy(50, y1)
+    pdf.cell(55, 5, _safe(settings.get("account_number", "")))
+    pdf.set_xy(135, y1)
+    pdf.cell(60, 5, _safe(settings.get("sort_code", "")))
+    pdf.set_y(y1 + 10)
+
+    # ----- PAYMENT INSTRUCTION -----
     pdf.set_font("Helvetica", "", 9)
-    pdf.set_text_color(107, 114, 128)
+    pdf.set_text_color(*MUTED)
     pdf.multi_cell(0, 5, _safe(
         "Payment to be made within 30 days of invoice date. Please reference "
         "the invoice number when making payment. For queries contact "
-        "finance@optimussolutions.co.uk."
+        "finance@optimussolutions.co.uk"
     ))
 
-    # Footer
-    pdf.ln(16)
-    pdf.set_font("Helvetica", "", 8)
-    pdf.set_text_color(156, 163, 175)
-    pdf.cell(0, 5, "Optimus - Financial Services Resourcing Specialists", align="C")
-
-    # =====================================================================
-    # Phase 9 / IR 16 — Billing Detail Schedule pages (page 2+).
-    # Renders two sections matching the Example invoice.pdf:
-    #   1. Days Billed (W/C, Associate, Role, Day Rate, Days Billed, Net)
-    #   2. Expenses Breakdown (W/C, Associate, Category, Date, Net, VAT%, VAT)
-    # Data is rebuilt from the invoice's engagement + period via
-    # _generate_invoice_payload so the schedule always reconciles to page 1.
-    # =====================================================================
+    # ===================== PAGE 2: BILLING DETAIL SCHEDULE =====================
     try:
         if invoice.engagement_id and invoice.period_start and invoice.period_end:
             with Session(engine) as _s:
-                # Re-derive the schedule data (cheap — same query the
-                # auto-generator used).
-                _year = invoice.period_start.year if hasattr(invoice.period_start, 'year') else None
-                _month = invoice.period_start.month if hasattr(invoice.period_start, 'month') else None
+                _year = invoice.period_start.year if hasattr(invoice.period_start, "year") else None
+                _month = invoice.period_start.month if hasattr(invoice.period_start, "month") else None
                 if _year and _month:
                     sched = _generate_invoice_payload(_s, invoice.engagement_id, _year, _month)
                     pdf.add_page()
-                    # Logo + title at top-right.
-                    try:
-                        _logo_path = os.path.join(os.path.dirname(__file__), "static", "images", "optimus-logo-header-new.png")
-                        if os.path.exists(_logo_path):
-                            pdf.image(_logo_path, x=10, y=10, h=14)
-                    except Exception:
-                        pass
-                    pdf.set_xy(60, 10)
-                    pdf.set_font("Helvetica", "B", 18)
-                    pdf.set_text_color(30, 58, 138)
-                    pdf.cell(0, 12, "BILLING DETAIL SCHEDULE", align="R", new_x="LMARGIN", new_y="NEXT")
-                    pdf.set_xy(60, 24)
+                    pdf.set_fill_color(*NAVY)
+                    pdf.rect(0, 0, 210, 22, style="F")
+                    pdf.set_text_color(255, 255, 255)
+                    pdf.set_font("Helvetica", "B", 22)
+                    pdf.set_xy(12, 6)
+                    pdf.cell(120, 12, "OPTIMUS")
+                    pdf.set_font("Helvetica", "B", 14)
+                    pdf.set_xy(115, 7)
+                    pdf.cell(83, 10, "BILLING DETAIL SCHEDULE", align="R")
+                    pdf.set_y(28)
+
                     pdf.set_font("Helvetica", "", 9)
-                    pdf.set_text_color(107, 114, 128)
-                    pdf.cell(0, 5, f"Invoice {invoice.invoice_number} | Period {sched['period_start']} to {sched['period_end']}",
-                             align="R", new_x="LMARGIN", new_y="NEXT")
-                    pdf.ln(10)
-
-                    # ----- Days Billed table -----
-                    pdf.set_font("Helvetica", "B", 11)
-                    pdf.set_text_color(31, 41, 55)
-                    pdf.cell(0, 7, "DAYS BILLED", new_x="LMARGIN", new_y="NEXT")
+                    pdf.set_text_color(*MUTED)
+                    pdf.cell(0, 5, "Supporting detail for main invoice", new_x="LMARGIN", new_y="NEXT")
                     pdf.ln(2)
-                    pdf.set_fill_color(248, 250, 252)
-                    pdf.set_font("Helvetica", "B", 8)
-                    pdf.set_text_color(55, 65, 81)
-                    pdf.cell(28, 7, "W/C", border="B", fill=True, new_x="RIGHT")
-                    pdf.cell(55, 7, "Associate", border="B", fill=True, new_x="RIGHT")
-                    pdf.cell(35, 7, "Role", border="B", fill=True, new_x="RIGHT")
-                    pdf.cell(22, 7, "Day Rate", border="B", fill=True, align="R", new_x="RIGHT")
-                    pdf.cell(20, 7, "Days", border="B", fill=True, align="R", new_x="RIGHT")
-                    pdf.cell(30, 7, "Net", border="B", fill=True, align="R", new_x="LMARGIN", new_y="NEXT")
-                    pdf.set_font("Helvetica", "", 8)
-                    pdf.set_text_color(31, 41, 55)
-                    for row in sched["schedule_days_billed"]:
-                        wc = row["wc"].strftime("%d %b %Y") if row["wc"] else "—"
-                        pdf.cell(28, 6, _safe(wc), border="B", new_x="RIGHT")
-                        pdf.cell(55, 6, _safe(row["associate"][:30]), border="B", new_x="RIGHT")
-                        pdf.cell(35, 6, _safe(row["role"][:20]), border="B", new_x="RIGHT")
-                        pdf.cell(22, 6, f"£{row['day_rate']:,.2f}", border="B", align="R", new_x="RIGHT")
-                        pdf.cell(20, 6, f"{row['days_billed']:.2f}", border="B", align="R", new_x="RIGHT")
-                        pdf.cell(30, 6, f"£{row['net_amount']:,.2f}", border="B", align="R", new_x="LMARGIN", new_y="NEXT")
-                    if not sched["schedule_days_billed"]:
-                        pdf.set_text_color(156, 163, 175)
-                        pdf.set_font("Helvetica", "I", 8)
-                        pdf.cell(0, 6, "  (no approved timesheets in period)", border="B", new_x="LMARGIN", new_y="NEXT")
 
+                    s2_y = pdf.get_y()
+                    pdf.set_font("Helvetica", "", 8)
+                    pdf.set_text_color(*MUTED)
+                    pdf.set_xy(12, s2_y)
+                    pdf.cell(60, 5, "Invoice Number")
+                    pdf.set_xy(105, s2_y)
+                    pdf.cell(60, 5, "Project Name")
+                    pdf.set_font("Helvetica", "B", 10)
+                    pdf.set_text_color(*INK)
+                    pdf.set_xy(12, s2_y + 5)
+                    pdf.cell(85, 6, _safe(invoice.invoice_number or ""))
+                    pdf.set_xy(105, s2_y + 5)
+                    pdf.cell(85, 6, _safe(project_name))
+                    pdf.ln(13)
+
+                    pdf.set_font("Helvetica", "", 8)
+                    pdf.set_text_color(*MUTED)
+                    pdf.cell(30, 5, "Invoice Period")
+                    pdf.set_font("Helvetica", "B", 10)
+                    pdf.set_text_color(*INK)
+                    pdf.set_xy(42, pdf.get_y())
+                    pdf.cell(140, 5, _safe(
+                        f"{sched['period_start']} to {sched['period_end']}"
+                    ))
                     pdf.ln(8)
-                    # ----- Expenses Breakdown table -----
-                    pdf.set_font("Helvetica", "B", 11)
-                    pdf.set_text_color(31, 41, 55)
-                    pdf.cell(0, 7, "EXPENSES BREAKDOWN", new_x="LMARGIN", new_y="NEXT")
-                    pdf.ln(2)
-                    pdf.set_fill_color(248, 250, 252)
-                    pdf.set_font("Helvetica", "B", 8)
-                    pdf.set_text_color(55, 65, 81)
-                    pdf.cell(25, 7, "W/C", border="B", fill=True, new_x="RIGHT")
-                    pdf.cell(40, 7, "Associate", border="B", fill=True, new_x="RIGHT")
-                    pdf.cell(35, 7, "Category", border="B", fill=True, new_x="RIGHT")
-                    pdf.cell(25, 7, "Date", border="B", fill=True, new_x="RIGHT")
-                    pdf.cell(25, 7, "Net", border="B", fill=True, align="R", new_x="RIGHT")
-                    pdf.cell(15, 7, "VAT %", border="B", fill=True, align="R", new_x="RIGHT")
-                    pdf.cell(25, 7, "VAT", border="B", fill=True, align="R", new_x="LMARGIN", new_y="NEXT")
+
                     pdf.set_font("Helvetica", "", 8)
-                    pdf.set_text_color(31, 41, 55)
-                    for row in sched["schedule_expenses"]:
-                        wc = row["wc"].strftime("%d %b %Y") if row["wc"] else "—"
-                        date_str = row["date"].strftime("%d %b %Y") if row.get("date") else "—"
-                        pdf.cell(25, 6, _safe(wc), border="B", new_x="RIGHT")
-                        pdf.cell(40, 6, _safe(row["associate"][:25]), border="B", new_x="RIGHT")
-                        pdf.cell(35, 6, _safe((row["category"] or "")[:20]), border="B", new_x="RIGHT")
-                        pdf.cell(25, 6, _safe(date_str), border="B", new_x="RIGHT")
-                        pdf.cell(25, 6, f"£{row['net']:,.2f}", border="B", align="R", new_x="RIGHT")
-                        pdf.cell(15, 6, f"{row['vat_pct']:.0f}%", border="B", align="R", new_x="RIGHT")
-                        pdf.cell(25, 6, f"£{row['vat_amount']:,.2f}", border="B", align="R", new_x="LMARGIN", new_y="NEXT")
-                    if not sched["schedule_expenses"]:
-                        pdf.set_text_color(156, 163, 175)
+                    pdf.set_text_color(*MUTED)
+                    pdf.multi_cell(0, 4, _safe(
+                        "This schedule provides a breakdown of all Associates billed on "
+                        "this invoice, grouped by week. Each row represents one "
+                        "individual for one working week."
+                    ))
+                    pdf.ln(2)
+
+                    pdf.set_font("Helvetica", "B", 10)
+                    pdf.set_text_color(*NAVY)
+                    pdf.cell(0, 6, "DAYS BILLED", new_x="LMARGIN", new_y="NEXT")
+                    pdf.ln(1)
+                    db_widths = [28, 50, 35, 24, 22, 27]
+                    db_headers = ["W/C DATE", "ASSOCIATE NAME", "ROLE", "DAY RATE", "DAYS BILLED", "NET AMOUNT"]
+                    db_aligns = ["L", "L", "L", "R", "R", "R"]
+                    pdf.set_fill_color(*NAVY)
+                    pdf.set_text_color(255, 255, 255)
+                    pdf.set_font("Helvetica", "B", 8)
+                    x = 12
+                    row_y = pdf.get_y()
+                    for i, h in enumerate(db_headers):
+                        pdf.set_xy(x, row_y)
+                        pdf.cell(db_widths[i], 7,
+                                 ("  " + h) if db_aligns[i] == "L" else h,
+                                 align=db_aligns[i], fill=True)
+                        x += db_widths[i]
+                    pdf.set_y(row_y + 7)
+                    pdf.set_font("Helvetica", "", 8)
+                    pdf.set_text_color(*INK)
+                    for row in sched["schedule_days_billed"]:
+                        wc = row["wc"].strftime("%d %b %Y") if row["wc"] else "-"
+                        row_y = pdf.get_y()
+                        vals = [
+                            f"W/C {wc}",
+                            (row["associate"] or "")[:30],
+                            (row["role"] or "")[:18],
+                            f"GBP {row['day_rate']:,.2f}",
+                            f"{row['days_billed']:g}",
+                            f"GBP {row['net_amount']:,.2f}",
+                        ]
+                        x = 12
+                        for i, v in enumerate(vals):
+                            pdf.set_xy(x, row_y)
+                            pdf.cell(db_widths[i], 6,
+                                     ("  " + _safe(v)) if db_aligns[i] == "L" else _safe(v),
+                                     border="B", align=db_aligns[i])
+                            x += db_widths[i]
+                        pdf.set_y(row_y + 6)
+                    if not sched["schedule_days_billed"]:
+                        pdf.set_text_color(*MUTED)
                         pdf.set_font("Helvetica", "I", 8)
-                        pdf.cell(0, 6, "  (no expenses in period)", border="B", new_x="LMARGIN", new_y="NEXT")
+                        pdf.cell(sum(db_widths), 6, "  (no approved timesheets in period)",
+                                 border="B", new_x="LMARGIN", new_y="NEXT")
+                    pdf.ln(6)
+
+                    pdf.set_font("Helvetica", "B", 10)
+                    pdf.set_text_color(*NAVY)
+                    pdf.cell(0, 6, "EXPENSES BREAKDOWN", new_x="LMARGIN", new_y="NEXT")
+                    pdf.ln(1)
+                    eb_widths = [25, 40, 32, 22, 24, 16, 27]
+                    eb_headers = ["W/C DATE", "ASSOCIATE NAME", "CATEGORY", "DATE",
+                                  "NET AMOUNT", "VAT %", "VAT AMOUNT"]
+                    eb_aligns = ["L", "L", "L", "L", "R", "C", "R"]
+                    pdf.set_fill_color(*NAVY)
+                    pdf.set_text_color(255, 255, 255)
+                    pdf.set_font("Helvetica", "B", 8)
+                    x = 12
+                    row_y = pdf.get_y()
+                    for i, h in enumerate(eb_headers):
+                        pdf.set_xy(x, row_y)
+                        pdf.cell(eb_widths[i], 7,
+                                 ("  " + h) if eb_aligns[i] == "L" else h,
+                                 align=eb_aligns[i], fill=True)
+                        x += eb_widths[i]
+                    pdf.set_y(row_y + 7)
+                    pdf.set_font("Helvetica", "", 8)
+                    pdf.set_text_color(*INK)
+                    for row in sched["schedule_expenses"]:
+                        wc = row["wc"].strftime("%d %b %Y") if row["wc"] else "-"
+                        dt = row["date"].strftime("%d %b %Y") if row.get("date") else "-"
+                        cat_name = (row.get("category") or "")
+                        is_mileage = "ileage" in cat_name and (row.get("vat_pct") or 0) == 0
+                        vat_pct_disp = "N/A" if is_mileage else f"{row.get('vat_pct') or 0:.0f}%"
+                        row_y = pdf.get_y()
+                        vals = [
+                            f"W/C {wc}",
+                            (row["associate"] or "")[:22],
+                            cat_name[:18],
+                            dt,
+                            f"GBP {row['net']:,.2f}",
+                            vat_pct_disp,
+                            f"GBP {row['vat_amount']:,.2f}",
+                        ]
+                        x = 12
+                        for i, v in enumerate(vals):
+                            pdf.set_xy(x, row_y)
+                            pdf.cell(eb_widths[i], 6,
+                                     ("  " + _safe(v)) if eb_aligns[i] == "L" else _safe(v),
+                                     border="B", align=eb_aligns[i])
+                            x += eb_widths[i]
+                        pdf.set_y(row_y + 6)
+                    if not sched["schedule_expenses"]:
+                        pdf.set_text_color(*MUTED)
+                        pdf.set_font("Helvetica", "I", 8)
+                        pdf.cell(sum(eb_widths), 6, "  (no expenses in period)",
+                                 border="B", new_x="LMARGIN", new_y="NEXT")
 
                     pdf.ln(10)
-                    pdf.set_font("Helvetica", "", 7)
-                    pdf.set_text_color(156, 163, 175)
-                    pdf.cell(0, 5,
-                        _safe("(c) Optimus Operations Limited  |  finance@optimussolutions.co.uk"),
-                        align="C")
+                    pdf.set_draw_color(*LIGHT_GREY)
+                    pdf.line(12, pdf.get_y(), 198, pdf.get_y())
+                    pdf.ln(4)
+                    pdf.set_font("Helvetica", "", 8)
+                    pdf.set_text_color(*MUTED)
+                    footer_bits = [
+                        f"(c) {settings.get('company_name', 'Optimus Operations Limited')}",
+                        "finance@optimussolutions.co.uk",
+                    ]
+                    if settings.get("vat_number"):
+                        footer_bits.append(f"VAT No. {settings['vat_number']}")
+                    if settings.get("company_reg"):
+                        footer_bits.append(f"Company Reg. {settings['company_reg']}")
+                    pdf.cell(0, 5, _safe("  |  ".join(footer_bits)), align="C")
     except Exception:
-        # Schedule pages are a bonus — if they fail, the page-1 invoice
-        # still renders correctly. Don't kill the whole PDF.
         current_app.logger.exception("Billing detail schedule render failed")
 
     return pdf.output()
