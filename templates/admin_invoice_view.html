@@ -369,16 +369,16 @@
             </thead>
             <tbody>
                 {% for item in line_items %}
-                {% set is_expense_band = item.type == 'expense_band' %}
+                {% set is_expense = item.type in ('expense_band', 'expense_category') %}
                 <tr>
                     <td class="desc-cell">{{ item.description or '' }}</td>
                     <td class="r">
-                        {% if is_expense_band %}-
+                        {% if is_expense %}-
                         {% elif item.rate %}£{{ "%.2f"|format(item.rate|float) }}
                         {% endif %}
                     </td>
                     <td class="c">
-                        {% if is_expense_band %}-
+                        {% if is_expense %}-
                         {% elif item.quantity %}{{ ("%g"|format(item.quantity|float)) }} Days
                         {% endif %}
                     </td>
@@ -464,6 +464,113 @@
         {% endif %}
     </div>
 </div>
+
+{# ============= BILLING DETAIL SCHEDULE (mirrors PDF page 2) =============
+   Shows every approved timesheet (Days Billed) and every individual
+   expense line (Expenses Breakdown) that was rolled into the invoice
+   above. Same source data as the PDF, recomputed live so any timesheet
+   edits since generation are reflected on screen. #}
+{% if schedule_days_billed or schedule_expenses %}
+<div class="invoice-container mt-4">
+    <div class="invoice-header">
+        <div class="brand">OPTIMUS</div>
+        <div class="text-end">
+            <div class="title">Billing Detail Schedule</div>
+            <div style="font-size:0.8rem; opacity:0.85;">Supporting detail for invoice {{ invoice.invoice_number }}</div>
+        </div>
+    </div>
+    <div class="invoice-body">
+
+        <div class="meta-row" style="border-top: none; margin-top: 0; padding-top: 0;">
+            <div>
+                <div class="meta-label">Invoice Number</div>
+                <div class="meta-value">{{ invoice.invoice_number or '—' }}</div>
+            </div>
+            <div>
+                <div class="meta-label">Project Name</div>
+                <div class="meta-value">{{ invoice.engagement_name or '—' }}</div>
+            </div>
+            <div style="grid-column: span 2;">
+                <div class="meta-label">Invoice Period</div>
+                <div class="meta-value">
+                    {% if invoice.period_start and invoice.period_end %}
+                        {{ invoice.period_start.strftime('%d %b %Y') }} to {{ invoice.period_end.strftime('%d %b %Y') }}
+                    {% else %}—{% endif %}
+                </div>
+            </div>
+        </div>
+
+        <p class="text-muted small mt-3 mb-2">
+            This schedule provides a breakdown of all Associates billed on this invoice, grouped by week.
+            Each row represents one individual for one working week.
+        </p>
+
+        <h4 style="color: var(--navy); font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.06em; margin: 1.25rem 0 0.5rem 0;">Days Billed</h4>
+        <table class="line-items-table">
+            <thead>
+                <tr>
+                    <th>W/C Date</th>
+                    <th>Associate Name</th>
+                    <th>Role</th>
+                    <th class="r">Day Rate</th>
+                    <th class="r">Days Billed</th>
+                    <th class="r">Net Amount</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in schedule_days_billed %}
+                <tr>
+                    <td>W/C {{ row.wc.strftime('%d %b %Y') if row.wc else '—' }}</td>
+                    <td>{{ row.associate or '' }}</td>
+                    <td>{{ row.role or '' }}</td>
+                    <td class="r">£{{ "%.2f"|format((row.day_rate or 0)|float) }}</td>
+                    <td class="r">{{ "%g"|format((row.days_billed or 0)|float) }}</td>
+                    <td class="r">£{{ "%.2f"|format((row.net_amount or 0)|float) }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="6" class="text-center text-muted py-3"><em>No approved timesheets in this period.</em></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <h4 style="color: var(--navy); font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.06em; margin: 1.5rem 0 0.5rem 0;">Expenses Breakdown</h4>
+        <table class="line-items-table">
+            <thead>
+                <tr>
+                    <th>W/C Date</th>
+                    <th>Associate Name</th>
+                    <th>Category</th>
+                    <th>Date</th>
+                    <th class="r">Net Amount</th>
+                    <th class="c">VAT %</th>
+                    <th class="r">VAT Amount</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in schedule_expenses %}
+                {% set vp = (row.vat_pct or 0)|float %}
+                {% set is_mileage = 'ileage' in (row.category or '') and vp == 0 %}
+                <tr>
+                    <td>W/C {{ row.wc.strftime('%d %b %Y') if row.wc else '—' }}</td>
+                    <td>{{ row.associate or '' }}</td>
+                    <td>{{ row.category or '' }}</td>
+                    <td>{{ row.date.strftime('%d %b %Y') if row.date else '—' }}</td>
+                    <td class="r">£{{ "%.2f"|format((row.net or 0)|float) }}</td>
+                    <td class="c">{% if is_mileage %}N/A{% else %}{{ "%.0f"|format(vp) }}%{% endif %}</td>
+                    <td class="r">£{{ "%.2f"|format((row.vat_amount or 0)|float) }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="7" class="text-center text-muted py-3"><em>No expenses claimed in this period.</em></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
 </div>
 
 <!-- Send Invoice Modal -->

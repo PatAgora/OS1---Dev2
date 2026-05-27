@@ -3628,20 +3628,34 @@ def _generate_invoice_payload(s, engagement_id: int, year: int, month: int) -> d
             "WHERE te.timesheet_id IN :ids"
         ).bindparams(ids=ts_ids)).all()
 
-    # Group expenses by VAT band for page-1 summary lines (IR 15).
-    band_totals = {}  # treatment -> {net, vat}
+    # Group expenses by CATEGORY (e.g. "Food", "Travel") for page-1
+    # summary lines — so if five people each claimed £10 of food the
+    # invoice shows one "Food" line at £50 net plus its VAT. Keyed by
+    # (category_name, vat_treatment) so the rare case of the same name
+    # at two different VAT treatments doesn't collapse incorrectly.
+    cat_totals = {}  # (category, treatment) -> {net, vat, vat_pct}
     schedule_expenses = []
     ts_user_by_id = {r.id: r.user_id for r in ts_rows}
     ts_wc_by_id = {r.id: r.period_start for r in ts_rows}
     for x in exp_rows:
         treatment = (x.vat_treatment or "standard")
-        bucket = band_totals.setdefault(treatment, {"net": 0.0, "vat": 0.0})
+        category = (x.expense_type or "Expenses").strip() or "Expenses"
+        key = (category, treatment)
+        bucket = cat_totals.setdefault(
+            key,
+            {"net": 0.0, "vat": 0.0, "vat_pct": float(x.vat_rate_pct or 0), "treatment": treatment},
+        )
         bucket["net"] += float(x.amount or 0)
         bucket["vat"] += float(x.vat_amount or 0)
+        # If the first row had vat_pct=0 but a later row carries the
+        # real %, prefer the non-zero value so the display isn't blank
+        # when one entry was mis-tagged.
+        if not bucket["vat_pct"] and (x.vat_rate_pct or 0):
+            bucket["vat_pct"] = float(x.vat_rate_pct or 0)
         schedule_expenses.append({
             "wc": ts_wc_by_id.get(x.timesheet_id),
             "associate": names.get(ts_user_by_id.get(x.timesheet_id), "(unknown)"),
-            "category": x.expense_type,
+            "category": category,
             "date": x.date_of_expense,
             "net": float(x.amount or 0),
             "vat_pct": float(x.vat_rate_pct or 0),
@@ -3676,19 +3690,28 @@ def _generate_invoice_payload(s, engagement_id: int, year: int, month: int) -> d
         role_vat += adj["vat_amount"]
     expense_subtotal = 0.0
     expense_vat = 0.0
-    for treatment, b in sorted(band_totals.items()):
-        if b["net"] <= 0:
-            continue   # IR 15 — suppress empty VAT bands
+    # One line per (category, treatment) — sorted alphabetically by
+    # category for stable output. "Non-VATable" / mileage cases keep
+    # vat_pct at 0; the renderer shows "N/A" for those.
+    for (category, treatment), b in sorted(cat_totals.items(), key=lambda kv: kv[0][0].lower()):
+        if b["net"] <= 0 and b["vat"] <= 0:
+            continue   # suppress empty rows
         expense_subtotal += b["net"]
         expense_vat += b["vat"]
+        # Description carries the VAT-band suffix only for the
+        # "Non-VATable" case so the PDF renderer's existing
+        # `"Non-VATable" in desc` check still triggers the "N/A" %.
+        desc = category
+        if treatment == "non_vatable":
+            desc = f"{category} (Non-VATable)"
         line_items.append({
-            "description": _vat_band_label(treatment),
+            "description": desc,
             "quantity": 1,
             "rate": b["net"],
             "amount": b["net"],
-            "vat_pct": {"standard": 20.0, "reduced": 5.0, "zero": 0.0, "non_vatable": 0.0}.get(treatment, 0.0),
+            "vat_pct": b["vat_pct"],
             "vat_amount": b["vat"],
-            "type": "expense_band",
+            "type": "expense_category",
         })
 
     subtotal = role_subtotal + expense_subtotal
@@ -3716,15 +3739,19 @@ def _generate_invoice_payload(s, engagement_id: int, year: int, month: int) -> d
 
 def _reconcile_invoice_expense_totals(payload: dict) -> tuple:
     """IR 17, 18 — sum of schedule_expenses must equal sum of page-1
-    expense_band line items (net AND VAT separately). Returns (ok, msg)."""
+    expense line items (net AND VAT separately). Returns (ok, msg).
+    Accepts both `expense_category` (per-category rollup, current) and
+    `expense_band` (per-VAT-band rollup, legacy) types so existing
+    in-flight payloads still reconcile."""
+    EXP_TYPES = ("expense_category", "expense_band")
     sched_net = sum(x["net"] for x in payload.get("schedule_expenses", []))
     sched_vat = sum(x["vat_amount"] for x in payload.get("schedule_expenses", []))
-    band_net = sum(li["amount"] for li in payload.get("line_items", []) if li.get("type") == "expense_band")
-    band_vat = sum(li["vat_amount"] for li in payload.get("line_items", []) if li.get("type") == "expense_band")
-    if round(sched_net, 2) != round(band_net, 2):
-        return False, f"Expense net mismatch: schedule £{sched_net:.2f} vs page-1 £{band_net:.2f}"
-    if round(sched_vat, 2) != round(band_vat, 2):
-        return False, f"Expense VAT mismatch: schedule £{sched_vat:.2f} vs page-1 £{band_vat:.2f}"
+    line_net = sum(li["amount"] for li in payload.get("line_items", []) if li.get("type") in EXP_TYPES)
+    line_vat = sum(li["vat_amount"] for li in payload.get("line_items", []) if li.get("type") in EXP_TYPES)
+    if round(sched_net, 2) != round(line_net, 2):
+        return False, f"Expense net mismatch: schedule £{sched_net:.2f} vs line items £{line_net:.2f}"
+    if round(sched_vat, 2) != round(line_vat, 2):
+        return False, f"Expense VAT mismatch: schedule £{sched_vat:.2f} vs line items £{line_vat:.2f}"
     return True, "OK"
 
 
@@ -4126,6 +4153,21 @@ def admin_view_invoice(invoice_id):
             default_recipients = _invoice_recipients_default(invoice)
         except Exception:
             default_recipients = []
+        # Re-derive the billing-detail schedule (Days Billed + Expenses
+        # Breakdown) so the on-screen view shows the same page-2 schedule
+        # as the PDF. Best-effort: silently skip if anything goes wrong
+        # — page 1 still renders.
+        schedule_days_billed = []
+        schedule_expenses = []
+        try:
+            if invoice.engagement_id and invoice.period_start:
+                _y = invoice.period_start.year
+                _m = invoice.period_start.month
+                _sched = _generate_invoice_payload(s, invoice.engagement_id, _y, _m)
+                schedule_days_billed = _sched.get("schedule_days_billed") or []
+                schedule_expenses = _sched.get("schedule_expenses") or []
+        except Exception:
+            current_app.logger.exception("admin_view_invoice: schedule recompute failed")
         return render_template(
             "admin_invoice_view.html",
             invoice=invoice,
@@ -4134,6 +4176,8 @@ def admin_view_invoice(invoice_id):
             settings=settings,
             billing_block=billing_block,
             default_recipients=default_recipients,
+            schedule_days_billed=schedule_days_billed,
+            schedule_expenses=schedule_expenses,
         )
 
 @app.route("/admin/invoices/<int:invoice_id>/edit", methods=["GET", "POST"])
@@ -4453,9 +4497,12 @@ def admin_delete_invoice(invoice_id):
     return redirect(url_for('admin_invoices'))
 
 def _load_invoice_settings() -> dict:
-    """Return the invoice_settings JSON as a dict. Falls back to the
-    Example-invoice-correct defaults so a brand-new install renders a
-    valid PDF without admin intervention."""
+    """Return the invoice_settings JSON as a dict. If the admin has
+    saved a settings row, return it AS-IS (so clearing a field on
+    /admin/invoices/settings actually clears it on invoices, and any
+    edit propagates immediately). If no row exists yet, return the
+    Example-invoice-correct defaults so a brand-new install renders
+    a valid PDF without admin intervention."""
     fallback = {
         "company_name": "OPTIMUS OPERATIONS LIMITED",
         "company_address": "71-75 Shelton Street, Covent Garden, London, WC2H 9JQ",
@@ -4470,10 +4517,7 @@ def _load_invoice_settings() -> dict:
         with engine.connect() as c:
             row = c.execute(text("SELECT config FROM invoice_settings LIMIT 1")).first()
             if row and row[0]:
-                cfg = json.loads(row[0])
-                for k, v in fallback.items():
-                    cfg.setdefault(k, v)
-                return cfg
+                return json.loads(row[0])
     except Exception:
         pass
     return fallback
@@ -4683,7 +4727,7 @@ def _generate_invoice_pdf(invoice, line_items):
         vat_pct_raw = item.get("vat_pct")
         vat_pct = _f(vat_pct_raw) if vat_pct_raw is not None else None
         vat_amount = _f(item.get("vat_amount"))
-        if item_type == "expense_band":
+        if item_type in ("expense_band", "expense_category"):
             day_rate_str = "-"
             units_str = "-"
         else:
@@ -5233,15 +5277,14 @@ def admin_export_invoices():
 @app.route("/admin/invoices/settings", methods=["GET", "POST"])
 @login_required
 def admin_invoice_settings():
-    """Invoice settings page — editable for admin users."""
-    settings = {}
-    try:
-        with Session(engine) as s:
-            row = s.execute(text("SELECT config FROM invoice_settings LIMIT 1")).first()
-            if row and row[0]:
-                settings = json.loads(row[0])
-    except Exception:
-        pass
+    """Invoice settings page — editable for admin users. The FROM
+    block on every invoice (PDF + on-screen view) pulls live from
+    here via `_load_invoice_settings`, so any edit here propagates
+    to all invoices on the next render."""
+    # Fall back to the same defaults `_load_invoice_settings` uses, so
+    # the form is pre-populated with the values currently appearing on
+    # invoices — admin can edit any field and Save.
+    settings = _load_invoice_settings()
 
     if request.method == "POST":
         settings = {
