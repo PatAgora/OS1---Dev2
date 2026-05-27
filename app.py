@@ -4519,9 +4519,18 @@ def admin_edit_invoice(invoice_id):
                 "vat_amount": invoice.vat_amount,
                 "total_amount": invoice.total_amount,
             }
+            # line_items is too verbose for the "Manually overridden"
+            # panel — the JSON blob doesn't tell the reader anything
+            # actionable (the per-line totals/VAT it contains are derived
+            # from the headline numbers we already diff). Drop it from
+            # the surfaced overrides; the audit log still captures
+            # before/after for forensics via the _before / _after dicts.
+            SKIP_OVERRIDE_FIELDS = {"line_items"}
             overrides = [
                 {"field": k, "original": _before[k], "new": _after[k]}
-                for k in _after if _before.get(k) != _after.get(k)
+                for k in _after
+                if k not in SKIP_OVERRIDE_FIELDS
+                and _before.get(k) != _after.get(k)
             ]
 
             s.commit()
