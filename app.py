@@ -6806,6 +6806,52 @@ def admin_update_hmrc_mileage_rate():
     return redirect(redir)
 
 
+@app.route("/admin/company-settings/default-vat-rate", methods=["POST"])
+@login_required
+def admin_update_default_vat_rate():
+    """IR 38 / 40 — update only the central default VAT rate in
+    company_settings, so the Expense Categories tile on /taxonomy/manage
+    can save it without opening the full Company Settings page. Honours
+    ?next=taxonomy_manage. Used as the fallback rate on every invoice
+    line item."""
+    guard = _require_admin()
+    if guard:
+        return guard
+    nxt = (request.form.get("next") or "").strip()
+    redir = url_for("taxonomy_manage") if nxt == "taxonomy_manage" else url_for("admin_company_settings")
+    try:
+        new_rate = float(request.form.get("default_vat_rate") or "")
+    except ValueError:
+        flash("Default VAT rate must be a number (e.g. 20 for 20%).", "warning")
+        return redirect(redir)
+    if new_rate < 0 or new_rate > 100:
+        flash("Default VAT rate must be between 0 and 100.", "warning")
+        return redirect(redir)
+    try:
+        settings = _company_settings()
+        old_rate = settings.get("default_vat_rate")
+        settings["default_vat_rate"] = new_rate
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as c:
+            row = c.execute(text("SELECT id FROM company_settings ORDER BY id LIMIT 1")).first()
+            if row:
+                c.execute(text("UPDATE company_settings SET config = :cfg WHERE id = :id")
+                          .bindparams(cfg=json.dumps(settings), id=row[0]))
+            else:
+                c.execute(text("INSERT INTO company_settings (config) VALUES (:cfg)")
+                          .bindparams(cfg=json.dumps(settings)))
+        flash(f"Default VAT rate updated to {new_rate:g}%.", "success")
+        try:
+            log_audit_event("update", "config",
+                            f"Default VAT rate changed: {old_rate} -> {new_rate}",
+                            "company_settings", 0,
+                            {"default_vat_rate_old": old_rate, "default_vat_rate_new": new_rate})
+        except Exception:
+            pass
+    except Exception as exc:
+        flash(f"Failed to save default VAT rate: {exc}", "danger")
+    return redirect(redir)
+
+
 @app.route("/admin/expense-categories", methods=["GET"])
 @login_required
 def admin_expense_categories():
@@ -31241,6 +31287,14 @@ def taxonomy_manage():
         hmrc_mileage_rate = float(_company_settings().get("hmrc_mileage_rate", 0.45))
     except Exception:
         hmrc_mileage_rate = 0.45
+    # IR 38 / 40 — central default VAT rate (company_settings.default_vat_rate).
+    # Used as the fallback rate on every invoice line item; the Expense
+    # Categories tile on /taxonomy/manage lets an admin change it without
+    # opening Company Settings.
+    try:
+        default_vat_rate = float(_company_settings().get("default_vat_rate", 20))
+    except Exception:
+        default_vat_rate = 20.0
 
     # Leave reasons for config page
     leave_reasons_list = []
@@ -31491,7 +31545,8 @@ Optimus - Financial Services Resourcing Specialists"""
                            vetting_profiles=vetting_profiles,
                            vetting_expiry_config=vetting_expiry_config,
                            expense_categories=expense_categories_list,
-                           hmrc_mileage_rate=hmrc_mileage_rate)
+                           hmrc_mileage_rate=hmrc_mileage_rate,
+                           default_vat_rate=default_vat_rate)
 
 @app.route("/taxonomy/category/add", methods=["POST"])
 @login_required

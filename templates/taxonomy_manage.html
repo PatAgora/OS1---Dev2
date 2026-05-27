@@ -1391,6 +1391,24 @@ Following your offer of engagement with Optimus, the next step is to complete ou
   </div>
   <div class="card-body collapsible-body" id="expense-categories-body" style="display: none;">
 
+    {# Default VAT rate — central config, fallback for every invoice line item #}
+    <div class="mb-3 p-3" style="background:#f8fafc;border-radius:8px;border:1px solid #e5e7eb;">
+      <h6 class="mb-2"><i class="fas fa-percent me-1 text-primary"></i>Default VAT Rate</h6>
+      <p class="text-muted small mb-2">Used as the fallback VAT rate on every invoice line item when no explicit rate is supplied. Changes apply immediately to new invoices — historical invoices keep their persisted rate.</p>
+      <form method="POST" action="{{ url_for('admin_update_default_vat_rate') }}" class="row g-2 align-items-end">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="next" value="taxonomy_manage">
+        <div class="col-md-3">
+          <label class="form-label small fw-semibold">Rate (% VAT)</label>
+          <input type="number" name="default_vat_rate" class="form-control form-control-sm"
+                 step="0.01" min="0" max="100" value="{{ '%g'|format(default_vat_rate) }}" required>
+        </div>
+        <div class="col-md-3">
+          <button type="submit" class="btn btn-primary btn-sm"><i class="fas fa-save me-1"></i> Save rate</button>
+        </div>
+      </form>
+    </div>
+
     {# HMRC mileage rate — central config, used by every Mileage-flagged category #}
     <div class="mb-4 p-3" style="background:#f8fafc;border-radius:8px;border:1px solid #e5e7eb;">
       <h6 class="mb-2"><i class="fas fa-road me-1 text-primary"></i>HMRC Mileage Rate</h6>
