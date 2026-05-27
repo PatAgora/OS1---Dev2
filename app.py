@@ -3443,13 +3443,14 @@ def _invoice_period_for_month(engagement, year: int, month: int):
 
 
 def _vat_band_label(treatment: str) -> str:
-    """Render the VAT-band label for invoice line items."""
+    """Render the VAT-band label for invoice line items — matches the
+    Example Invoice page 1 wording ("Expenses (20% VAT)" etc)."""
     return {
-        "standard": "Expenses – Standard Rate (20%)",
-        "reduced":  "Expenses – Reduced Rate (5%)",
-        "zero":     "Expenses – Zero Rate (0%)",
-        "non_vatable": "Expenses – Mileage / Non-VATable",
-    }.get(treatment, f"Expenses – {treatment}")
+        "standard":    "Expenses (20% VAT)",
+        "reduced":     "Expenses (5% VAT)",
+        "zero":        "Expenses (0% VAT)",
+        "non_vatable": "Expenses (Non-VATable)",
+    }.get(treatment, f"Expenses ({treatment})")
 
 
 def _invoice_recipients_default(invoice) -> list[str]:
@@ -3566,12 +3567,12 @@ def _generate_invoice_payload(s, engagement_id: int, year: int, month: int) -> d
     # whatever the timesheet captured. Result is a dict keyed by
     # candidate id; one resolved rate per Associate per invoice run.
     charge_rate_by_cand = {}
+    cand_role = {}   # candidate_id -> role_type ("Team Leader" etc)
     if cand_ids:
         # Two-step Python resolve for cross-dialect safety (Postgres
         # DISTINCT ON isn't available on SQLite): first the role each
         # Associate works under on this engagement, then the latest
         # EngagementPlan.charge_rate for that role.
-        cand_role = {}
         try:
             role_rows = s.execute(text(
                 "SELECT a.candidate_id, j.role_type, a.created_at "
@@ -3614,10 +3615,16 @@ def _generate_invoice_payload(s, engagement_id: int, year: int, month: int) -> d
         return ts_row.day_rate or 0
 
     # Build per-role line items + per-Associate-per-week schedule rows.
+    # Each role on the engagement (Team Leader, Officer, etc) becomes
+    # its own line item — keyed by (role_label, rate) so any rate
+    # variance within a role surfaces as separate lines rather than
+    # silently collapsing. Role comes from the Application -> Job
+    # role_type already resolved into `cand_role` above; falls back
+    # to "Day rate" when no role can be determined.
     # Adjustment timesheets (Phase 4 / TS 21) are surfaced as separate
     # labelled line items per IR 22/23 so the recipient sees the
     # "undercharge" / "overcharge" explicitly.
-    role_buckets = {}  # role_label -> {days, rate}
+    role_buckets = {}  # (role_label, rate) -> {days, rate}
     adjustment_lines = []   # list of dicts ready to become line_items
     schedule_days = []
     for r in ts_rows:
@@ -3625,11 +3632,12 @@ def _generate_invoice_payload(s, engagement_id: int, year: int, month: int) -> d
         days = r.billable_days or 0
         associate_name = names.get(r.user_id, "(unknown)")
         is_adjustment = (r.ts_type or "Standard") == "Adjustment"
+        role_label = (cand_role.get(r.user_id) or "Day rate").strip() or "Day rate"
         if is_adjustment:
             label_prefix = "Adjustment – undercharge" if days >= 0 else "Credit – overcharge"
             wc_str = r.period_start.strftime("%d %b %Y") if r.period_start else ""
             adjustment_lines.append({
-                "description": f"{label_prefix} WC {wc_str}: {associate_name}",
+                "description": f"{label_prefix} WC {wc_str}: {associate_name} ({role_label})",
                 "quantity": abs(days),
                 "rate": rate,
                 "amount": days * rate,  # signed
@@ -3639,15 +3647,13 @@ def _generate_invoice_payload(s, engagement_id: int, year: int, month: int) -> d
             })
         else:
             # Standard timesheet — feeds into the role bucket grouped roll-up.
-            role_label = "Day rate"
-            bucket = role_buckets.setdefault(role_label, {"days": 0, "rate": rate})
+            key = (role_label, float(rate or 0))
+            bucket = role_buckets.setdefault(key, {"days": 0, "rate": rate, "role": role_label})
             bucket["days"] += days
-            if rate and not bucket["rate"]:
-                bucket["rate"] = rate
         schedule_days.append({
             "wc": r.period_start,
             "associate": associate_name,
-            "role": "Adjustment" if is_adjustment else "Day rate",
+            "role": "Adjustment" if is_adjustment else role_label,
             "day_rate": rate,
             "days_billed": days,
             "net_amount": days * rate,
@@ -3671,30 +3677,26 @@ def _generate_invoice_payload(s, engagement_id: int, year: int, month: int) -> d
             "WHERE te.timesheet_id IN :ids"
         ).bindparams(ids=ts_ids)).all()
 
-    # Group expenses by CATEGORY (e.g. "Food", "Travel") for page-1
-    # summary lines — so if five people each claimed £10 of food the
-    # invoice shows one "Food" line at £50 net plus its VAT. Keyed by
-    # (category_name, vat_treatment) so the rare case of the same name
-    # at two different VAT treatments doesn't collapse incorrectly.
-    cat_totals = {}  # (category, treatment) -> {net, vat, vat_pct}
+    # Group expenses by VAT BAND for page-1 summary lines — matches the
+    # Example Invoice layout ("Expenses (20% VAT)", "Expenses (5% VAT)",
+    # "Expenses (0% VAT)", "Expenses (Non-VATable)"). All categories at
+    # the same VAT treatment roll up into one line. The per-category /
+    # per-associate / per-week detail still appears in the page-2
+    # Expenses Breakdown schedule.
+    band_totals = {}  # treatment -> {net, vat, vat_pct}
+    BAND_PCT = {"standard": 20.0, "reduced": 5.0, "zero": 0.0, "non_vatable": 0.0}
     schedule_expenses = []
     ts_user_by_id = {r.id: r.user_id for r in ts_rows}
     ts_wc_by_id = {r.id: r.period_start for r in ts_rows}
     for x in exp_rows:
         treatment = (x.vat_treatment or "standard")
-        category = (x.expense_type or "Expenses").strip() or "Expenses"
-        key = (category, treatment)
-        bucket = cat_totals.setdefault(
-            key,
-            {"net": 0.0, "vat": 0.0, "vat_pct": float(x.vat_rate_pct or 0), "treatment": treatment},
+        bucket = band_totals.setdefault(
+            treatment,
+            {"net": 0.0, "vat": 0.0, "vat_pct": BAND_PCT.get(treatment, 0.0)},
         )
         bucket["net"] += float(x.amount or 0)
         bucket["vat"] += float(x.vat_amount or 0)
-        # If the first row had vat_pct=0 but a later row carries the
-        # real %, prefer the non-zero value so the display isn't blank
-        # when one entry was mis-tagged.
-        if not bucket["vat_pct"] and (x.vat_rate_pct or 0):
-            bucket["vat_pct"] = float(x.vat_rate_pct or 0)
+        category = (x.expense_type or "Expenses").strip() or "Expenses"
         schedule_expenses.append({
             "wc": ts_wc_by_id.get(x.timesheet_id),
             "associate": names.get(ts_user_by_id.get(x.timesheet_id), "(unknown)"),
@@ -3710,14 +3712,17 @@ def _generate_invoice_payload(s, engagement_id: int, year: int, month: int) -> d
     line_items = []
     role_subtotal = 0.0
     role_vat = 0.0
-    for role, b in role_buckets.items():
+    # Sort roles alphabetically by label, then by rate, so output is
+    # stable across runs even when timesheet order shifts.
+    for (role_label, _rate_key), b in sorted(role_buckets.items(),
+                                             key=lambda kv: (kv[0][0].lower(), kv[0][1])):
         net = b["days"] * b["rate"]
         vat_pct = 20.0
         vat = net * (vat_pct / 100.0)
         role_subtotal += net
         role_vat += vat
         line_items.append({
-            "description": role,
+            "description": b["role"],
             "quantity": b["days"],
             "rate": b["rate"],
             "amount": net,
@@ -3733,28 +3738,28 @@ def _generate_invoice_payload(s, engagement_id: int, year: int, month: int) -> d
         role_vat += adj["vat_amount"]
     expense_subtotal = 0.0
     expense_vat = 0.0
-    # One line per (category, treatment) — sorted alphabetically by
-    # category for stable output. "Non-VATable" / mileage cases keep
-    # vat_pct at 0; the renderer shows "N/A" for those.
-    for (category, treatment), b in sorted(cat_totals.items(), key=lambda kv: kv[0][0].lower()):
+    # One line per VAT band — "Expenses (20% VAT)", "Expenses (5% VAT)",
+    # "Expenses (0% VAT)", "Expenses (Non-VATable)". Stable order from
+    # standard -> reduced -> zero -> non_vatable. The PDF renderer's
+    # existing `"Non-VATable" in desc` check still triggers the "N/A"
+    # display for the mileage band.
+    BAND_ORDER = ("standard", "reduced", "zero", "non_vatable")
+    for treatment in BAND_ORDER:
+        if treatment not in band_totals:
+            continue
+        b = band_totals[treatment]
         if b["net"] <= 0 and b["vat"] <= 0:
-            continue   # suppress empty rows
+            continue   # suppress empty bands
         expense_subtotal += b["net"]
         expense_vat += b["vat"]
-        # Description carries the VAT-band suffix only for the
-        # "Non-VATable" case so the PDF renderer's existing
-        # `"Non-VATable" in desc` check still triggers the "N/A" %.
-        desc = category
-        if treatment == "non_vatable":
-            desc = f"{category} (Non-VATable)"
         line_items.append({
-            "description": desc,
+            "description": _vat_band_label(treatment),
             "quantity": 1,
             "rate": b["net"],
             "amount": b["net"],
             "vat_pct": b["vat_pct"],
             "vat_amount": b["vat"],
-            "type": "expense_category",
+            "type": "expense_band",
         })
 
     subtotal = role_subtotal + expense_subtotal
