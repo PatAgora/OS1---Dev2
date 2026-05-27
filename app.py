@@ -5584,7 +5584,32 @@ def admin_clients():
     guard = _require_admin()
     if guard:
         return guard
+    # Back-button target: prefer explicit ?next= (e.g. from the
+    # "+ Add new client…" Opportunity flow), otherwise fall back to
+    # the browser's referer header so the button always sends the
+    # admin back to whichever page they came from. Strip the referer
+    # if it points at /admin/clients itself to avoid no-op loops, and
+    # if it's not same-origin (open-redirect safety).
     next_url = _safe_next_url_for_clients(request.args.get("next") or "")
+    if not next_url:
+        ref = (request.referrer or "").strip()
+        if ref:
+            try:
+                from urllib.parse import urlparse
+                parsed = urlparse(ref)
+                # Same-host check OR no host (relative referrer).
+                same_host = (
+                    not parsed.netloc
+                    or parsed.netloc == (request.host or "")
+                )
+                ref_path = parsed.path + (("?" + parsed.query) if parsed.query else "")
+                if (same_host and ref_path
+                    and ref_path.startswith("/")
+                    and not ref_path.startswith("//")
+                    and "/admin/clients" not in ref_path):
+                    next_url = ref_path
+            except Exception:
+                pass
     with Session(engine) as s:
         clients = s.scalars(select(Client).order_by(Client.name)).all()
         # How many engagements each client has — drives the delete-safe check.

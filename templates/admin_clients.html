@@ -13,18 +13,13 @@
                 Manage client records and their invoice codes (Phase 0 / IR 6).
             </p>
         </div>
-        {# Back button — honours ?next=<prev url> when present (e.g.
-           reached here from "+ Add new client…" on the Opportunity
-           create form); falls back to /admin/invoices otherwise. #}
-        {% if next_url %}
-        <a href="{{ next_url }}" class="btn btn-outline-light">
+        {# Back button — uses ?next= if present, else the browser's
+           referer (computed server-side and passed in next_url), else
+           the sidebar-implicit landing of /admin/invoices. Label is
+           always "Back to Previous Page" so the action is obvious. #}
+        <a href="{{ next_url or url_for('admin_invoices') }}" class="btn btn-outline-light">
             <i class="fas fa-arrow-left me-1"></i> Back to Previous Page
         </a>
-        {% else %}
-        <a href="{{ url_for('admin_invoices') }}" class="btn btn-outline-light">
-            <i class="fas fa-arrow-left me-1"></i> Back to Invoices
-        </a>
-        {% endif %}
     </div>
 </div>
 
