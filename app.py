@@ -3252,6 +3252,42 @@ def admin_invoices():
             autogen_month=month,
         )
 
+def _ensure_client_for_name(s, name: str) -> "Client":
+    """Return an existing Client row matching `name`, else create one
+    with an auto-derived 2-5 char code and code_confirmed=False (admin
+    review required before invoices generate). Used by the Opportunity
+    + Engagement create flows so a free-text client name always lands
+    a row on /admin/clients."""
+    name = (name or "").strip()
+    if not name:
+        return None
+    existing = s.scalar(select(Client).where(Client.name == name))
+    if existing:
+        return existing
+    import re as _re
+    words = [w for w in _re.split(r"\s+", name) if w]
+    initials = "".join(w[0] for w in words if w and w[0].isalpha()).upper()
+    if 2 <= len(initials) <= 5:
+        base = initials
+    else:
+        letters = _re.sub(r"[^A-Za-z]", "", name).upper()
+        base = (letters[:3] or "CLI")
+    code = base
+    n = 2
+    while s.scalar(select(Client).where(Client.client_code == code)) is not None:
+        suffix = str(n)
+        keep = max(2, 5 - len(suffix))
+        code = base[:keep] + suffix
+        n += 1
+        if n > 99:
+            code = (base[:3] + "X")[:5]
+            break
+    c = Client(name=name, client_code=code, code_confirmed=False)
+    s.add(c)
+    s.flush()
+    return c
+
+
 def _ensure_client_linked(s, engagement) -> "Client":
     """Phase 5 — make sure an engagement has a Client row linked. If the
     engagement has a free-text `client` string but no client_id, find or
@@ -5530,12 +5566,25 @@ def admin_clear_data_delete(entity: str):
     return redirect(url_for("admin_clear_data"))
 
 
+def _safe_next_url_for_clients(raw: str) -> str:
+    """Validate a ?next= URL on /admin/clients flows. Must start with
+    '/' and not '//' (relative path, no protocol). Returns empty string
+    when invalid so the template falls back to the default Back link."""
+    if not raw:
+        return ""
+    raw = raw.strip()
+    if not raw.startswith("/") or raw.startswith("//"):
+        return ""
+    return raw
+
+
 @app.route("/admin/clients", methods=["GET"])
 @login_required
 def admin_clients():
     guard = _require_admin()
     if guard:
         return guard
+    next_url = _safe_next_url_for_clients(request.args.get("next") or "")
     with Session(engine) as s:
         clients = s.scalars(select(Client).order_by(Client.name)).all()
         # How many engagements each client has — drives the delete-safe check.
@@ -5548,6 +5597,7 @@ def admin_clients():
         "admin_clients.html",
         clients=clients,
         eng_counts=eng_counts,
+        next_url=next_url,
     )
 
 
@@ -5586,6 +5636,11 @@ def admin_clients_new():
     # If the request came from a fetch (inline create), return JSON.
     if request.headers.get("X-Requested-With") == "fetch":
         return jsonify({"ok": True, "id": c.id, "name": name, "code": code})
+    # If the admin came here from another page (e.g. the Opportunity
+    # create flow's "+ Add new client…" dropdown) honour ?next=.
+    nxt = _safe_next_url_for_clients(request.form.get("next") or "")
+    if nxt:
+        return redirect(nxt)
     return redirect(url_for("admin_clients"))
 
 
@@ -14839,6 +14894,13 @@ def opportunities_():
         users_rows = s.execute(
             text("SELECT id, name FROM users ORDER BY name ASC")
         ).all()
+        # pull confirmed + pending Clients for the Client dropdown — the
+        # form replaces the free-text input with a <select> so admins
+        # pick from the existing list (with an "+ Add new client…"
+        # option that redirects to /admin/clients).
+        clients_for_select = [
+            c.name for c in s.scalars(select(Client).order_by(Client.name)).all()
+        ]
 
     # build the form *after* we have users
     form = OpportunityForm()
@@ -14889,10 +14951,17 @@ def opportunities_():
                 if row:
                     owner_name = row[0] or ""
 
+        # Guard: if the client dropdown's JS-only sentinel ever reaches
+        # the server (e.g. user has JS disabled and submits with the
+        # "+ Add new client…" option still selected), treat as empty.
+        _client_raw = (form.client.data or "").strip()
+        if _client_raw == "__add_new__":
+            _client_raw = ""
+
         with Session(engine) as s:
             opp = Opportunity(
                 name=form.name.data,
-                client=form.client.data or "",
+                client=_client_raw,
                 stage=form.stage.data,
                 owner=owner_name,  # storing name for now
                 est_start=est_start_dt,
@@ -14906,6 +14975,12 @@ def opportunities_():
             )
             s.add(opp)
             s.flush()  # now opp.id exists
+            # Auto-create the Client row when a free-text name doesn't
+            # exist yet. Lands as code_confirmed=False so the admin sees
+            # it on /admin/clients to confirm the auto-derived code
+            # before the project's first invoice can be generated.
+            if _client_raw:
+                _ensure_client_for_name(s, _client_raw)
 
             # Req 20 — also write the typed notes into the OpportunityNote
             # timeline so the edit page (which reads OpportunityNote rows,
@@ -14972,6 +15047,7 @@ def opportunities_():
         "opportunities_.html",
         form=form,
         items=rows,
+        clients_for_select=clients_for_select,
     )
 
 @app.route("/admin/roles", methods=["GET", "POST"])

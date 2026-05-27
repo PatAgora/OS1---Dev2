@@ -386,7 +386,33 @@
 
             <div class="col-md-3">
               <label class="field-label">Client</label>
-              {{ form.client(class="field-input form-control", placeholder="Client name") }}
+              {# Dropdown of existing clients + an "+ Add new client…"
+                 entry that redirects to /admin/clients?next=<current
+                 url>. After the admin creates the new client there the
+                 admin_clients_new route redirects back here. The form
+                 still posts client=<name> (string), matching the
+                 OpportunityForm.client StringField. #}
+              <select name="client" id="oppClientSelect"
+                      class="field-input form-select">
+                <option value="">— pick a client —</option>
+                {% for c in clients_for_select %}
+                <option value="{{ c }}" {% if form.client.data == c %}selected{% endif %}>{{ c }}</option>
+                {% endfor %}
+                <option value="__add_new__">+ Add new client…</option>
+              </select>
+              <script>
+              (function(){
+                var sel = document.getElementById('oppClientSelect');
+                if (!sel) return;
+                sel.addEventListener('change', function() {
+                  if (sel.value === '__add_new__') {
+                    var nextUrl = window.location.pathname + (window.location.search || '') + '#create-opportunity';
+                    window.location.href = '/admin/clients?next=' + encodeURIComponent(nextUrl);
+                    sel.value = '';
+                  }
+                });
+              })();
+              </script>
             </div>
 
             <div class="col-md-2">

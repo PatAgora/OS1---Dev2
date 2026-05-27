@@ -13,9 +13,18 @@
                 Manage client records and their invoice codes (Phase 0 / IR 6).
             </p>
         </div>
+        {# Back button — honours ?next=<prev url> when present (e.g.
+           reached here from "+ Add new client…" on the Opportunity
+           create form); falls back to /admin/invoices otherwise. #}
+        {% if next_url %}
+        <a href="{{ next_url }}" class="btn btn-outline-light">
+            <i class="fas fa-arrow-left me-1"></i> Back to Previous Page
+        </a>
+        {% else %}
         <a href="{{ url_for('admin_invoices') }}" class="btn btn-outline-light">
             <i class="fas fa-arrow-left me-1"></i> Back to Invoices
         </a>
+        {% endif %}
     </div>
 </div>
 
@@ -38,6 +47,11 @@
     <div class="card-body">
         <form method="POST" action="{{ url_for('admin_clients_new') }}" class="row g-3">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            {% if next_url %}
+            {# Passes the previous page URL through so the handler can
+               redirect back after creating the client. #}
+            <input type="hidden" name="next" value="{{ next_url }}">
+            {% endif %}
             <div class="col-md-7">
                 <label class="form-label">Client name</label>
                 <input type="text" name="name" class="form-control" required
