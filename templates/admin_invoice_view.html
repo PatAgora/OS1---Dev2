@@ -657,14 +657,22 @@
       </div>
       <div class="modal-body">
         <div class="alert alert-danger">
-          <strong>Are you sure you want to void this invoice?</strong>
-          Voiding marks <strong>{{ invoice.invoice_number }}</strong>
-          (£{{ "%.2f"|format((invoice.total_amount or 0)|float) }}) as
-          cancelled. It will be excluded from all financial summaries
-          and aged reports, the invoice number is NOT released back to
-          the sequence (numbers are never reused per IR 6), and the
-          tile will reappear in "Ready to generate" so a replacement
-          can be raised.
+          <p class="mb-2"><strong>Are you sure you want to void this invoice?</strong></p>
+          <p class="mb-2">
+            Voiding marks <strong>{{ invoice.invoice_number }}</strong>
+            (£{{ "%.2f"|format((invoice.total_amount or 0)|float) }}) as
+            cancelled. It will be excluded from all financial summaries
+            and aged reports, the invoice number is NOT released back to
+            the sequence (numbers are never reused per IR 6), and the
+            tile will reappear in "Ready to generate" so a replacement
+            can be raised.
+          </p>
+          <p class="mb-0">
+            <strong>Before you void:</strong> consider whether the client
+            needs to be informed (especially if the invoice has already
+            been sent) and whether a replacement invoice will be needed
+            for the same period.
+          </p>
         </div>
         <div class="mb-3">
           <label for="voidReason" class="form-label fw-semibold">Reason <span class="text-danger">*</span></label>
