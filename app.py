@@ -3203,19 +3203,44 @@ def admin_invoices():
                     if datetime.date(year, month, d).weekday() == 0
                 )
                 expected = active_assoc * weeks_in_month
+                # Counts are person-week distinct counts of STANDARD
+                # timesheets only. Adjustment timesheets (admin-created
+                # corrections, type='Adjustment') aren't part of the
+                # one-per-person-per-week cadence so they don't count
+                # toward the ready gate — otherwise an Adjustment
+                # sitting on top of a Standard week inflates the
+                # approved count past expected ("5 / 4 approved").
+                # DISTINCT (user_id, period_start) also guards against
+                # accidental duplicate Standards for the same week.
                 approved = s.execute(text(
-                    "SELECT COUNT(*) FROM timesheets WHERE engagement_id = :eid "
-                    "AND period_start >= :ms AND period_end <= :me AND LOWER(status) = 'approved'"
+                    "SELECT COUNT(*) FROM ("
+                    "  SELECT DISTINCT user_id, period_start FROM timesheets "
+                    "  WHERE engagement_id = :eid "
+                    "  AND period_start >= :ms AND period_end <= :me "
+                    "  AND LOWER(status) = 'approved' "
+                    "  AND COALESCE(timesheet_type, 'Standard') = 'Standard'"
+                    ") sub"
                 ).bindparams(eid=eng.id, ms=ms, me=me)).scalar() or 0
                 rejected = s.execute(text(
-                    "SELECT COUNT(*) FROM timesheets WHERE engagement_id = :eid "
-                    "AND period_start >= :ms AND period_end <= :me AND LOWER(status) = 'rejected'"
+                    "SELECT COUNT(*) FROM ("
+                    "  SELECT DISTINCT user_id, period_start FROM timesheets "
+                    "  WHERE engagement_id = :eid "
+                    "  AND period_start >= :ms AND period_end <= :me "
+                    "  AND LOWER(status) = 'rejected' "
+                    "  AND COALESCE(timesheet_type, 'Standard') = 'Standard'"
+                    ") sub"
                 ).bindparams(eid=eng.id, ms=ms, me=me)).scalar() or 0
-                # Total of timesheets that physically exist — kept so the
-                # outstanding-list logic still works.
+                # Total = distinct person-weeks of Standard timesheets
+                # in the period. Used to compute the blocking count and
+                # to keep the outstanding-list logic in step with the
+                # approved/rejected denominators.
                 total = s.execute(text(
-                    "SELECT COUNT(*) FROM timesheets WHERE engagement_id = :eid "
-                    "AND period_start >= :ms AND period_end <= :me"
+                    "SELECT COUNT(*) FROM ("
+                    "  SELECT DISTINCT user_id, period_start FROM timesheets "
+                    "  WHERE engagement_id = :eid "
+                    "  AND period_start >= :ms AND period_end <= :me "
+                    "  AND COALESCE(timesheet_type, 'Standard') = 'Standard'"
+                    ") sub"
                 ).bindparams(eid=eng.id, ms=ms, me=me)).scalar() or 0
                 # Skip engagements with neither people on assignment nor
                 # any timesheets in the month — nothing to show.
@@ -3234,6 +3259,11 @@ def admin_invoices():
                 # tile can still surface them visually.
                 outstanding = []
                 if approved < total:
+                    # Outstanding list mirrors the counts above — only
+                    # Standard person-weeks. An Adjustment that's
+                    # already Approved would never show here anyway,
+                    # but excluding it keeps the list in step with the
+                    # badge's denominator.
                     out_rows = s.execute(text(
                         "SELECT t.id, t.status, t.period_start, c.name AS associate_name "
                         "FROM timesheets t "
@@ -3241,6 +3271,7 @@ def admin_invoices():
                         "WHERE t.engagement_id = :eid "
                         "  AND t.period_start >= :ms AND t.period_end <= :me "
                         "  AND LOWER(t.status) <> 'approved' "
+                        "  AND COALESCE(t.timesheet_type, 'Standard') = 'Standard' "
                         "ORDER BY t.period_start, c.name"
                     ).bindparams(eid=eng.id, ms=ms, me=me)).all()
                     outstanding = [
