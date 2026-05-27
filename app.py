@@ -4045,8 +4045,25 @@ def admin_view_invoice(invoice_id):
                 overridden_fields = json.loads(last_override.details).get("fields", [])
         except Exception:
             overridden_fields = []
-        return render_template("admin_invoice_view.html", invoice=invoice,
-                               line_items=line_items, overridden_fields=overridden_fields)
+        # Mirror the PDF: pull invoice_settings (Optimus bank/VAT/address)
+        # and the engagement billing block so the on-screen view matches
+        # Example invoice.pdf exactly.
+        try:
+            settings = _load_invoice_settings()
+        except Exception:
+            settings = {}
+        try:
+            billing_block = _engagement_billing_block(invoice.engagement)
+        except Exception:
+            billing_block = {}
+        return render_template(
+            "admin_invoice_view.html",
+            invoice=invoice,
+            line_items=line_items,
+            overridden_fields=overridden_fields,
+            settings=settings,
+            billing_block=billing_block,
+        )
 
 @app.route("/admin/invoices/<int:invoice_id>/edit", methods=["GET", "POST"])
 @login_required
@@ -4384,11 +4401,32 @@ def _generate_invoice_pdf(invoice, line_items):
     def _safe(t):
         return (t or "").replace("\u2014", "-").replace("\u2013", "-").replace("\u2018", "'").replace("\u2019", "'").replace("\u201c", '"').replace("\u201d", '"').replace("\u2026", "...").replace("\u00a3", "GBP ")
 
+    def _f(v, default=0.0):
+        """Coerce a maybe-string line-item value into a float for
+        format strings. Old invoices (or hand-edited line_items JSON)
+        sometimes store numbers as strings — '500.00', '£500', etc."""
+        if v is None:
+            return default
+        if isinstance(v, (int, float)):
+            return float(v)
+        try:
+            return float(str(v).replace(",", "").replace("£", "").replace("$", "").strip())
+        except (TypeError, ValueError):
+            return default
+
     settings = _load_invoice_settings()
-    bb = _engagement_billing_block(getattr(invoice, "engagement", None))
-    project_name = invoice.engagement_name or (
-        getattr(invoice.engagement, "name", "") if getattr(invoice, "engagement", None) else ""
-    ) or ""
+    try:
+        bb = _engagement_billing_block(getattr(invoice, "engagement", None))
+    except Exception:
+        # Detached relationship or missing engagement — render with
+        # empty billing block rather than failing the whole PDF.
+        bb = _engagement_billing_block(None)
+    try:
+        project_name = invoice.engagement_name or (
+            getattr(invoice.engagement, "name", "") if getattr(invoice, "engagement", None) else ""
+        ) or ""
+    except Exception:
+        project_name = invoice.engagement_name or ""
     purchase_order = bb.get("po") or ""
 
     pdf = FPDF()
@@ -4542,13 +4580,14 @@ def _generate_invoice_pdf(invoice, line_items):
     pdf.set_text_color(*INK)
     for item in line_items:
         row_y = pdf.get_y()
-        desc = item.get("description") or ""
+        desc = str(item.get("description") or "")
         item_type = item.get("type") or ""
-        qty = item.get("quantity") or 0
-        rate = item.get("rate") or 0
-        amount = item.get("amount") or 0
-        vat_pct = item.get("vat_pct")
-        vat_amount = item.get("vat_amount") or 0
+        qty = _f(item.get("quantity"))
+        rate = _f(item.get("rate"))
+        amount = _f(item.get("amount"))
+        vat_pct_raw = item.get("vat_pct")
+        vat_pct = _f(vat_pct_raw) if vat_pct_raw is not None else None
+        vat_amount = _f(item.get("vat_amount"))
         if item_type == "expense_band":
             day_rate_str = "-"
             units_str = "-"
@@ -4591,12 +4630,12 @@ def _generate_invoice_pdf(invoice, line_items):
     pdf.set_xy(box_left, pdf.get_y())
     pdf.cell(half, 7, "Net Total", align="R")
     pdf.set_font("Helvetica", "", 10)
-    pdf.cell(half, 7, f"GBP {(invoice.subtotal or 0):,.2f}", align="R", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(half, 7, f"GBP {_f(invoice.subtotal):,.2f}", align="R", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", "B", 10)
     pdf.set_xy(box_left, pdf.get_y())
     pdf.cell(half, 7, "VAT", align="R")
     pdf.set_font("Helvetica", "", 10)
-    pdf.cell(half, 7, f"GBP {(invoice.vat_amount or 0):,.2f}", align="R", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(half, 7, f"GBP {_f(invoice.vat_amount):,.2f}", align="R", new_x="LMARGIN", new_y="NEXT")
     total_y = pdf.get_y() + 1
     pdf.set_fill_color(*NAVY_DARK)
     pdf.rect(box_left, total_y, box_right - box_left, 9, style="F")
@@ -4604,7 +4643,7 @@ def _generate_invoice_pdf(invoice, line_items):
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_xy(box_left, total_y)
     pdf.cell(half, 9, "GBP TOTAL", align="R")
-    pdf.cell(half, 9, f"GBP {(invoice.total_amount or 0):,.2f}", align="R")
+    pdf.cell(half, 9, f"GBP {_f(invoice.total_amount):,.2f}", align="R")
     pdf.set_y(total_y + 13)
 
     # ----- DUE DATE -----
@@ -4754,9 +4793,9 @@ def _generate_invoice_pdf(invoice, line_items):
                             f"W/C {wc}",
                             (row["associate"] or "")[:30],
                             (row["role"] or "")[:18],
-                            f"GBP {row['day_rate']:,.2f}",
-                            f"{row['days_billed']:g}",
-                            f"GBP {row['net_amount']:,.2f}",
+                            f"GBP {_f(row.get('day_rate')):,.2f}",
+                            f"{_f(row.get('days_billed')):g}",
+                            f"GBP {_f(row.get('net_amount')):,.2f}",
                         ]
                         x = 12
                         for i, v in enumerate(vals):
@@ -4799,17 +4838,18 @@ def _generate_invoice_pdf(invoice, line_items):
                         wc = row["wc"].strftime("%d %b %Y") if row["wc"] else "-"
                         dt = row["date"].strftime("%d %b %Y") if row.get("date") else "-"
                         cat_name = (row.get("category") or "")
-                        is_mileage = "ileage" in cat_name and (row.get("vat_pct") or 0) == 0
-                        vat_pct_disp = "N/A" if is_mileage else f"{row.get('vat_pct') or 0:.0f}%"
+                        vat_pct_val = _f(row.get("vat_pct"))
+                        is_mileage = "ileage" in cat_name and vat_pct_val == 0
+                        vat_pct_disp = "N/A" if is_mileage else f"{vat_pct_val:.0f}%"
                         row_y = pdf.get_y()
                         vals = [
                             f"W/C {wc}",
                             (row["associate"] or "")[:22],
                             cat_name[:18],
                             dt,
-                            f"GBP {row['net']:,.2f}",
+                            f"GBP {_f(row.get('net')):,.2f}",
                             vat_pct_disp,
-                            f"GBP {row['vat_amount']:,.2f}",
+                            f"GBP {_f(row.get('vat_amount')):,.2f}",
                         ]
                         x = 12
                         for i, v in enumerate(vals):
@@ -4869,8 +4909,17 @@ def admin_invoice_pdf(invoice_id):
         try:
             pdf_bytes = _generate_invoice_pdf(invoice, line_items)
         except Exception as e:
-            flash(f"PDF generation failed: {e}", "danger")
-            return redirect(url_for('admin_invoices'))
+            # Surface the full traceback to Railway logs so we can
+            # diagnose production-only PDF failures.
+            import traceback
+            tb = traceback.format_exc()
+            print(f"[admin_invoice_pdf] FAILED invoice_id={invoice_id}: {e}\n{tb}", flush=True)
+            try:
+                current_app.logger.exception("admin_invoice_pdf failed")
+            except Exception:
+                pass
+            flash(f"PDF generation failed: {type(e).__name__}: {e}", "danger")
+            return redirect(url_for('admin_view_invoice', invoice_id=invoice_id))
 
     return Response(
         pdf_bytes,
@@ -4896,7 +4945,14 @@ def admin_send_invoice(invoice_id):
         try:
             pdf_bytes = _generate_invoice_pdf(invoice, line_items)
         except Exception as e:
-            flash(f"PDF generation failed: {e}", "danger")
+            import traceback
+            tb = traceback.format_exc()
+            print(f"[admin_send_invoice] PDF FAILED invoice_id={invoice_id}: {e}\n{tb}", flush=True)
+            try:
+                current_app.logger.exception("admin_send_invoice PDF generation failed")
+            except Exception:
+                pass
+            flash(f"PDF generation failed: {type(e).__name__}: {e}", "danger")
             return redirect(url_for('admin_view_invoice', invoice_id=invoice_id))
 
         # Build email
@@ -5010,7 +5066,10 @@ def admin_resend_invoice(invoice_id: int):
         try:
             pdf_bytes = _generate_invoice_pdf(invoice, line_items)
         except Exception as e:
-            flash(f"PDF re-render failed: {e}", "danger")
+            import traceback
+            tb = traceback.format_exc()
+            print(f"[admin_resend_invoice] PDF FAILED invoice_id={invoice_id}: {e}\n{tb}", flush=True)
+            flash(f"PDF re-render failed: {type(e).__name__}: {e}", "danger")
             return redirect(url_for("admin_view_invoice", invoice_id=invoice_id))
         subject = f"Reminder: Invoice {invoice.invoice_number} — Optimus"
         body = f"<p>This is a follow-up copy of invoice <strong>{invoice.invoice_number}</strong> for £{invoice.total_amount or 0:,.2f}.</p>"

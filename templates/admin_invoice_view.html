@@ -5,158 +5,211 @@
 {% block content %}
 <div class="container-fluid px-4 pt-3 pb-4">
 <style>
+    :root {
+        --navy: #1e3a8a;
+        --navy-dark: #0f1740;
+        --ink: #1f2937;
+        --muted: #6b7280;
+        --light-grey: #e5e7eb;
+    }
     .invoice-container {
         background: white;
         border-radius: 12px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        box-shadow: 0 2px 10px rgba(0,0,0,0.08);
         max-width: 900px;
         margin: 0 auto;
-        padding: 2.5rem;
+        overflow: hidden;
     }
     .invoice-header {
+        background: var(--navy);
+        color: #fff;
+        padding: 1.25rem 2.5rem;
         display: flex;
         justify-content: space-between;
-        align-items: flex-start;
-        margin-bottom: 2rem;
-        padding-bottom: 1.5rem;
-        border-bottom: 2px solid #1e3a8a;
+        align-items: center;
     }
-    .invoice-brand h1 {
-        color: #1e3a8a;
-        font-size: 2rem;
+    .invoice-header .brand {
+        font-size: 1.9rem;
         font-weight: 800;
-        margin: 0;
+        letter-spacing: 0.02em;
     }
-    .invoice-brand p {
-        color: #6b7280;
-        margin: 0.25rem 0 0 0;
-    }
-    .invoice-meta {
-        text-align: right;
-    }
-    .invoice-meta .invoice-number {
+    .invoice-header .title {
         font-size: 1.5rem;
         font-weight: 700;
-        color: #1f2937;
-        font-family: monospace;
     }
-    .invoice-meta .invoice-date {
-        color: #6b7280;
-        margin-top: 0.25rem;
+    .invoice-body {
+        padding: 2rem 2.5rem;
     }
-    .status-badge {
-        display: inline-block;
-        padding: 0.375rem 1rem;
-        border-radius: 20px;
-        font-weight: 600;
-        font-size: 0.875rem;
-        margin-top: 0.5rem;
-    }
-    .status-draft { background: #f3f4f6; color: #6b7280; }
-    .status-pending { background: #fef3c7; color: #92400e; }
-    .status-paid { background: #dcfce7; color: #166534; }
-    .status-overdue { background: #fee2e2; color: #991b1b; }
-    
-    .client-details {
-        margin-bottom: 2rem;
-    }
-    .client-details h3 {
-        color: #6b7280;
-        font-size: 0.75rem;
+    .col-label {
+        font-size: 0.7rem;
+        color: var(--muted);
         text-transform: uppercase;
-        letter-spacing: 0.05em;
-        margin-bottom: 0.5rem;
-    }
-    .client-details .client-name {
-        font-size: 1.25rem;
+        letter-spacing: 0.06em;
+        margin-bottom: 0.4rem;
         font-weight: 600;
-        color: #1f2937;
     }
-    .client-details .engagement-name {
-        color: #6b7280;
+    .col-value {
+        color: var(--ink);
+        font-size: 0.95rem;
+        line-height: 1.4;
     }
-    
+    .col-value strong { color: var(--ink); font-weight: 600; }
+    .meta-row {
+        border-top: 1px solid var(--light-grey);
+        margin-top: 1.5rem;
+        padding-top: 1rem;
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1rem;
+    }
+    .meta-row .meta-label {
+        font-size: 0.7rem;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+    }
+    .meta-row .meta-value {
+        font-weight: 600;
+        color: var(--ink);
+        font-size: 0.95rem;
+        margin-top: 0.2rem;
+    }
+    .invoice-period {
+        margin-top: 0.75rem;
+        font-size: 0.85rem;
+        color: var(--muted);
+    }
+    .invoice-period strong {
+        color: var(--ink);
+        font-weight: 600;
+        margin-left: 0.4rem;
+    }
+
     .line-items-table {
         width: 100%;
         border-collapse: collapse;
-        margin-bottom: 1.5rem;
+        margin: 1.5rem 0 0.5rem 0;
     }
-    .line-items-table th {
-        background: #f8fafc;
-        padding: 0.875rem 1rem;
-        text-align: left;
+    .line-items-table thead th {
+        background: var(--navy);
+        color: #fff;
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        padding: 0.6rem 0.8rem;
         font-weight: 600;
-        color: #374151;
-        font-size: 0.875rem;
-        border-bottom: 2px solid #e5e7eb;
+        text-align: left;
     }
+    .line-items-table thead th.r { text-align: right; }
+    .line-items-table thead th.c { text-align: center; }
     .line-items-table td {
-        padding: 1rem;
-        border-bottom: 1px solid #e5e7eb;
-        color: #1f2937;
+        padding: 0.65rem 0.8rem;
+        border-bottom: 1px solid var(--light-grey);
+        color: var(--ink);
+        font-size: 0.9rem;
+        vertical-align: top;
     }
-    .line-items-table .amount-col {
-        text-align: right;
-        font-weight: 500;
-    }
-    
-    .totals-section {
+    .line-items-table td.r { text-align: right; font-variant-numeric: tabular-nums; }
+    .line-items-table td.c { text-align: center; }
+    .line-items-table .desc-cell { width: 40%; }
+
+    .totals-wrap {
         display: flex;
         justify-content: flex-end;
+        margin-top: 1rem;
     }
     .totals-box {
-        width: 300px;
+        width: 360px;
     }
     .totals-row {
         display: flex;
         justify-content: space-between;
-        padding: 0.625rem 0;
-        color: #6b7280;
+        padding: 0.4rem 0;
+        font-size: 0.95rem;
+        color: var(--ink);
     }
-    .totals-row .label {
-        font-weight: 500;
-    }
-    .totals-row.total {
-        font-size: 1.25rem;
-        font-weight: 700;
-        color: #1f2937;
-        border-top: 2px solid #1e3a8a;
-        padding-top: 1rem;
+    .totals-row .lbl { font-weight: 600; }
+    .totals-row .val { font-variant-numeric: tabular-nums; }
+    .totals-final {
+        background: var(--navy-dark);
+        color: #fff;
+        padding: 0.75rem 1rem;
         margin-top: 0.5rem;
-    }
-    
-    .invoice-footer {
-        margin-top: 2rem;
-        padding-top: 1.5rem;
-        border-top: 1px solid #e5e7eb;
-    }
-    .invoice-footer h4 {
-        font-size: 0.875rem;
-        font-weight: 600;
-        color: #374151;
-        margin-bottom: 0.5rem;
-    }
-    .invoice-footer p {
-        color: #6b7280;
-        font-size: 0.875rem;
-        margin: 0;
-    }
-    
-    .action-buttons {
         display: flex;
-        gap: 0.75rem;
-        flex-wrap: wrap;
+        justify-content: space-between;
+        font-weight: 700;
+        font-size: 1.1rem;
+        border-radius: 4px;
     }
-    
+    .totals-final .val { font-variant-numeric: tabular-nums; }
+
+    .due-row {
+        margin-top: 1.25rem;
+        font-size: 0.9rem;
+        color: var(--muted);
+    }
+    .due-row strong {
+        color: var(--ink);
+        font-weight: 600;
+        margin-left: 0.5rem;
+    }
+
+    .payment-details {
+        border-top: 1px solid var(--light-grey);
+        margin-top: 1.5rem;
+        padding-top: 1.25rem;
+    }
+    .payment-details h4 {
+        color: var(--navy);
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-weight: 700;
+        margin-bottom: 0.9rem;
+    }
+    .payment-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.85rem 2rem;
+    }
+    .payment-grid .pd-label {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        color: var(--muted);
+        letter-spacing: 0.05em;
+    }
+    .payment-grid .pd-value {
+        font-size: 0.95rem;
+        color: var(--ink);
+        font-weight: 600;
+        margin-top: 0.15rem;
+    }
+    .payment-footer {
+        margin-top: 1rem;
+        font-size: 0.82rem;
+        color: var(--muted);
+    }
+
+    .status-badge {
+        display: inline-block;
+        padding: 0.3rem 0.85rem;
+        border-radius: 20px;
+        font-weight: 600;
+        font-size: 0.8rem;
+        background: rgba(255,255,255,0.18);
+        color: #fff;
+    }
+    .action-buttons { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
     @media print {
         .no-print { display: none !important; }
-        .invoice-container { box-shadow: none; }
+        .invoice-container { box-shadow: none; border: 1px solid #ddd; }
     }
 </style>
 
 <div class="no-print mb-4">
     <div class="d-flex justify-content-between align-items-center">
-        <a href="{{ url_for('admin_invoices') }}" class="btn btn-outline-secondary">
+        <a href="{{ url_for('admin_invoices') }}" class="btn btn-outline-light">
             <i class="fas fa-arrow-left me-1"></i> Back
         </a>
         <div class="action-buttons">
@@ -200,7 +253,7 @@
                 </button>
             </form>
             {% endif %}
-            <form method="POST" action="{{ url_for('admin_delete_invoice', invoice_id=invoice.id) }}" class="d-inline" 
+            <form method="POST" action="{{ url_for('admin_delete_invoice', invoice_id=invoice.id) }}" class="d-inline"
                   onsubmit="return confirm('Delete this invoice? This cannot be undone.')">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-outline-danger">
@@ -229,111 +282,187 @@
 </div>
 {% endif %}
 
+{% set bb = billing_block or {} %}
+{% set st = settings or {} %}
+{% set eng = invoice.engagement %}
+
 <div class="invoice-container">
+
     <div class="invoice-header">
-        <div class="invoice-brand">
-            <h1>INVOICE</h1>
-            <p>Optimus OS1</p>
+        <div class="brand">OPTIMUS</div>
+        <div class="text-end">
+            <div class="title">Invoice</div>
+            <div><span class="status-badge">{{ invoice.status }}</span></div>
         </div>
-        <div class="invoice-meta">
-            <div class="invoice-number">{{ invoice.invoice_number }}</div>
-            <div class="invoice-date">
-                Date: {{ invoice.invoice_date.strftime('%d %B %Y') if invoice.invoice_date else 'N/A' }}
+    </div>
+
+    <div class="invoice-body">
+
+        <div class="row">
+            <div class="col-md-6">
+                <div class="col-label">Client Billing Address</div>
+                <div class="col-value">
+                    <strong>{{ bb.get('company_name') or invoice.client_name or '' }}</strong>
+                    {% if bb.get('addr1') %}<div>{{ bb.get('addr1') }}</div>{% endif %}
+                    {% if bb.get('addr2') %}<div>{{ bb.get('addr2') }}</div>{% endif %}
+                    {% set cp = ((bb.get('city') or '') ~ ' ' ~ (bb.get('postcode') or ''))|trim %}
+                    {% if cp %}<div>{{ cp }}</div>{% endif %}
+                    {% if bb.get('vat_number') %}
+                        <div class="mt-2"><span class="col-label d-block">Client VAT Number</span>{{ bb.get('vat_number') }}</div>
+                    {% endif %}
+                    {% if bb.get('company_reg') %}
+                        <div class="mt-2"><span class="col-label d-block">Client Company Reg</span>{{ bb.get('company_reg') }}</div>
+                    {% endif %}
+                </div>
             </div>
-            {% if invoice.due_date %}
-            <div class="invoice-date">
-                Due: {{ invoice.due_date.strftime('%d %B %Y') }}
+            <div class="col-md-6">
+                <div class="col-label">From</div>
+                <div class="col-value">
+                    <strong>{{ st.get('company_name', 'OPTIMUS OPERATIONS LIMITED') }}</strong>
+                    {% if st.get('company_address') %}
+                        {% for part in st.get('company_address').split(',') %}
+                            {% if part.strip() %}<div>{{ part.strip() }}</div>{% endif %}
+                        {% endfor %}
+                    {% endif %}
+                    {% if st.get('vat_number') %}<div>VAT Number: {{ st.get('vat_number') }}</div>{% endif %}
+                    {% if st.get('company_reg') %}<div>Company Reg: {{ st.get('company_reg') }}</div>{% endif %}
+                </div>
             </div>
-            {% endif %}
+        </div>
+
+        <div class="meta-row">
             <div>
-                <span class="status-badge status-{{ invoice.status|lower }}">{{ invoice.status }}</span>
+                <div class="meta-label">Project Name</div>
+                <div class="meta-value">{{ invoice.engagement_name or (eng.name if eng else '') or '—' }}</div>
+            </div>
+            <div>
+                <div class="meta-label">Invoice Date</div>
+                <div class="meta-value">{{ invoice.invoice_date.strftime('%d %b %Y') if invoice.invoice_date else '—' }}</div>
+            </div>
+            <div>
+                <div class="meta-label">Purchase Order Number</div>
+                <div class="meta-value">{{ bb.get('po') or '—' }}</div>
+            </div>
+            <div>
+                <div class="meta-label">Invoice Number</div>
+                <div class="meta-value">{{ invoice.invoice_number or '—' }}</div>
             </div>
         </div>
-    </div>
-    
-    <div class="row mb-4">
-        <div class="col-md-6">
-            <div class="client-details">
-                <h3>Bill To</h3>
-                {% set eng = invoice.engagement %}
-                <div class="client-name">{{ (eng.client if eng and eng.client else invoice.client_name) or '' }}</div>
-                {% if invoice.engagement_name %}
-                <div class="engagement-name">{{ invoice.engagement_name }}</div>
-                {% endif %}
-                {% if eng %}
-                  {% if eng.billing_address_line1 %}<div>{{ eng.billing_address_line1 }}</div>{% endif %}
-                  {% if eng.billing_address_line2 %}<div>{{ eng.billing_address_line2 }}</div>{% endif %}
-                  {% set cp = ((eng.billing_city or '') ~ ' ' ~ (eng.billing_postcode or ''))|trim %}
-                  {% if cp %}<div>{{ cp }}</div>{% endif %}
-                  {% if eng.client_company_reg %}<div class="text-muted small mt-2">Company Reg: {{ eng.client_company_reg }}</div>{% endif %}
-                  {% if eng.client_vat_number %}<div class="text-muted small">VAT Number: {{ eng.client_vat_number }}</div>{% endif %}
-                  {% if eng.purchase_order_number %}<div class="text-muted small">PO Number: {{ eng.purchase_order_number }}</div>{% endif %}
-                {% endif %}
+
+        {% if invoice.period_start and invoice.period_end %}
+        <div class="invoice-period">
+            Invoice Period:
+            <strong>{{ invoice.period_start.strftime('%d %b %Y') }} to {{ invoice.period_end.strftime('%d %b %Y') }}</strong>
+        </div>
+        {% endif %}
+
+        <table class="line-items-table">
+            <thead>
+                <tr>
+                    <th class="desc-cell">Role / Description</th>
+                    <th class="r">Day Rate</th>
+                    <th class="c">Units</th>
+                    <th class="r">Net Amount</th>
+                    <th class="c">VAT %</th>
+                    <th class="r">VAT Amount</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in line_items %}
+                {% set is_expense_band = item.type == 'expense_band' %}
+                <tr>
+                    <td class="desc-cell">{{ item.description or '' }}</td>
+                    <td class="r">
+                        {% if is_expense_band %}-
+                        {% elif item.rate %}£{{ "%.2f"|format(item.rate|float) }}
+                        {% endif %}
+                    </td>
+                    <td class="c">
+                        {% if is_expense_band %}-
+                        {% elif item.quantity %}{{ ("%g"|format(item.quantity|float)) }} Days
+                        {% endif %}
+                    </td>
+                    <td class="r">£{{ "%.2f"|format((item.amount or 0)|float) }}</td>
+                    <td class="c">
+                        {% if item.vat_pct is none %}—
+                        {% elif (item.vat_pct or 0)|float == 0 and 'Non-VATable' in (item.description or '') %}N/A
+                        {% else %}{{ "%.0f"|format((item.vat_pct or 0)|float) }}%
+                        {% endif %}
+                    </td>
+                    <td class="r">£{{ "%.2f"|format((item.vat_amount or 0)|float) }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="6" class="text-center text-muted py-4"><em>No line items</em></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <div class="totals-wrap">
+            <div class="totals-box">
+                <div class="totals-row">
+                    <span class="lbl">Net Total</span>
+                    <span class="val">£{{ "%.2f"|format((invoice.subtotal or 0)|float) }}</span>
+                </div>
+                <div class="totals-row">
+                    <span class="lbl">VAT</span>
+                    <span class="val">£{{ "%.2f"|format((invoice.vat_amount or 0)|float) }}</span>
+                </div>
+                <div class="totals-final">
+                    <span>GBP TOTAL</span>
+                    <span class="val">£{{ "%.2f"|format((invoice.total_amount or 0)|float) }}</span>
+                </div>
             </div>
         </div>
-        <div class="col-md-6">
-            <div class="client-details">
-                <h3>Payment Terms</h3>
-                <div class="client-name">{{ invoice.payment_terms or 'Net 30' }}</div>
+
+        {% if invoice.due_date %}
+        <div class="due-row">
+            Due Date: <strong>{{ invoice.due_date.strftime('%d %b %Y') }}</strong>
+        </div>
+        {% endif %}
+
+        <div class="payment-details">
+            <h4>Payment Details</h4>
+            <div class="payment-grid">
+                <div>
+                    <div class="pd-label">Account Name</div>
+                    <div class="pd-value">{{ st.get('account_name') or '—' }}</div>
+                </div>
+                <div>
+                    <div class="pd-label">Bank</div>
+                    <div class="pd-value">{{ st.get('bank_name') or '—' }}</div>
+                </div>
+                <div>
+                    <div class="pd-label">Account Number</div>
+                    <div class="pd-value">{{ st.get('account_number') or '—' }}</div>
+                </div>
+                <div>
+                    <div class="pd-label">Sort Code</div>
+                    <div class="pd-value">{{ st.get('sort_code') or '—' }}</div>
+                </div>
+            </div>
+            <div class="payment-footer">
+                Payment to be made within 30 days of invoice date. Please reference
+                the invoice number when making payment. For queries contact
+                finance@optimussolutions.co.uk
             </div>
         </div>
-    </div>
-    
-    <table class="line-items-table">
-        <thead>
-            <tr>
-                <th style="width:50%">Description</th>
-                <th style="width:15%">Quantity</th>
-                <th style="width:17.5%" class="amount-col">Rate</th>
-                <th style="width:17.5%" class="amount-col">Amount</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for item in line_items %}
-            <tr>
-                <td>{{ item.description or '' }}</td>
-                <td>{{ item.quantity or '' }}</td>
-                <td class="amount-col">{% if item.rate is defined and item.rate %}£{{ "%.2f"|format(item.rate) }}{% else %}—{% endif %}</td>
-                <td class="amount-col">£{{ "%.2f"|format(item.amount or 0) }}</td>
-            </tr>
-            {% else %}
-            <tr>
-                <td colspan="4" class="text-center text-muted py-4">No line items</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    
-    <div class="totals-section">
-        <div class="totals-box">
-            <div class="totals-row">
-                <span class="label">Subtotal</span>
-                <span>£{{ "%.2f"|format(invoice.subtotal or 0) }}</span>
-            </div>
-            <div class="totals-row">
-                <span class="label">VAT ({{ "%.1f"|format(invoice.vat_rate or 0) }}%)</span>
-                <span>£{{ "%.2f"|format(invoice.vat_amount or 0) }}</span>
-            </div>
-            <div class="totals-row total">
-                <span class="label">Total</span>
-                <span>£{{ "%.2f"|format(invoice.total_amount or 0) }}</span>
-            </div>
+
+        {% if invoice.notes %}
+        <div class="payment-details">
+            <h4>Notes</h4>
+            <p class="text-muted small mb-0">{{ invoice.notes }}</p>
         </div>
+        {% endif %}
+
+        {% if invoice.paid_date %}
+        <div class="payment-details">
+            <h4>Payment Received</h4>
+            <p class="text-muted small mb-0">{{ invoice.paid_date.strftime('%d %B %Y') }}</p>
+        </div>
+        {% endif %}
     </div>
-    
-    {% if invoice.notes %}
-    <div class="invoice-footer">
-        <h4>Notes</h4>
-        <p>{{ invoice.notes }}</p>
-    </div>
-    {% endif %}
-    
-    {% if invoice.paid_date %}
-    <div class="invoice-footer">
-        <h4>Payment Received</h4>
-        <p>{{ invoice.paid_date.strftime('%d %B %Y') }}</p>
-    </div>
-    {% endif %}
 </div>
 </div>
 
@@ -347,7 +476,7 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
-        <p class="text-muted mb-3">Send {{ invoice.invoice_number }} (£{{ "%.2f"|format(invoice.total_amount or 0) }}) with PDF attachment.</p>
+        <p class="text-muted mb-3">Send {{ invoice.invoice_number }} (£{{ "%.2f"|format((invoice.total_amount or 0)|float) }}) with PDF attachment.</p>
         <div class="mb-3">
           <label class="form-label fw-semibold" for="sendEmail">Recipient Email Address</label>
           <input type="email" class="form-control" id="sendEmail" name="email" placeholder="client@company.com" required>
