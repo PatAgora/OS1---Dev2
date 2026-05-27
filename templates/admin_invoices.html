@@ -328,13 +328,14 @@
               {# IR 9 — counter is a click-to-expand disclosure when
                  there are outstanding (non-Approved) timesheets in
                  the month. Ready (all approved) tiles just show the
-                 plain badge. #}
+                 plain badge. Rejected timesheets are counted separately
+                 — they don't block generation, they're just excluded. #}
               {% if tile.outstanding %}
               <button type="button" class="btn btn-sm p-0 border-0 bg-transparent"
                       data-bs-toggle="collapse" data-bs-target="#autogen-out-{{ tile.engagement_id }}"
                       aria-expanded="false" aria-controls="autogen-out-{{ tile.engagement_id }}"
                       title="Click to see outstanding timesheets">
-                <span class="badge bg-warning text-dark">
+                <span class="badge {% if tile.ready %}bg-success{% else %}bg-warning text-dark{% endif %}">
                   {{ tile.approved }} / {{ tile.total }} approved
                   <i class="fas fa-chevron-down ms-1" style="font-size:0.7em;"></i>
                 </span>
@@ -344,12 +345,21 @@
                 {{ tile.approved }} / {{ tile.total }} approved
               </span>
               {% endif %}
+              {% if tile.has_rejected %}
+              <span class="badge bg-danger ms-1" title="Rejected timesheets are excluded from invoice figures">
+                {{ tile.rejected }} rejected
+              </span>
+              {% endif %}
             </div>
           </div>
           <form method="POST" action="{{ url_for('admin_auto_generate_invoice', engagement_id=tile.engagement_id, year=tile.year, month=tile.month) }}"
-                onsubmit="return confirm('Auto-generate invoice for ENG-{{ tile.engagement_id }} ({{ tile.engagement_ref or tile.engagement_name }}) — {{ tile.client_name }} / {{ tile.engagement_name }} for {{ '%04d-%02d' % (tile.year, tile.month) }}?\n\nThis creates ONE invoice for THIS engagement only. Other engagements for the same client are billed separately.');">
+                {% if tile.has_rejected %}
+                onsubmit="return confirm('There is a rejected timesheet that has not been re-submitted. Are you sure you want to generate the invoice?\n\nThe rejected timesheet will be excluded from the invoice figures.\n\nProject: {{ tile.client_name }} / {{ tile.engagement_name }} ({{ '%04d-%02d' % (tile.year, tile.month) }})');"
+                {% else %}
+                onsubmit="return confirm('Auto-generate invoice for ENG-{{ tile.engagement_id }} ({{ tile.engagement_ref or tile.engagement_name }}) — {{ tile.client_name }} / {{ tile.engagement_name }} for {{ '%04d-%02d' % (tile.year, tile.month) }}?\n\nThis creates ONE invoice for THIS engagement only. Other engagements for the same client are billed separately.');"
+                {% endif %}>
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="btn btn-sm btn-primary" {% if not tile.ready %}disabled title="Some timesheets are not yet Approved"{% endif %}>
+            <button class="btn btn-sm btn-primary" {% if not tile.ready %}disabled title="Some timesheets are still Draft or Submitted — approve or reject them first"{% endif %}>
               <i class="fas fa-bolt me-1"></i>Generate
             </button>
           </form>

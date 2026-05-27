@@ -3192,9 +3192,16 @@ def admin_invoices():
                     "SELECT COUNT(*) FROM timesheets WHERE engagement_id = :eid "
                     "AND period_start >= :ms AND period_end <= :me AND LOWER(status) = 'approved'"
                 ).bindparams(eid=eng.id, ms=ms, me=me)).scalar() or 0
+                rejected = s.execute(text(
+                    "SELECT COUNT(*) FROM timesheets WHERE engagement_id = :eid "
+                    "AND period_start >= :ms AND period_end <= :me AND LOWER(status) = 'rejected'"
+                ).bindparams(eid=eng.id, ms=ms, me=me)).scalar() or 0
                 # IR 9 — drill-down: list the timesheets NOT yet approved
                 # so the collapsible tile body can show them. Joins
                 # candidates so the admin sees the Associate name.
+                # Rejected rows are included in the list (so the admin
+                # sees them) but counted separately as `rejected` so the
+                # tile can still surface them visually.
                 outstanding = []
                 if approved < total:
                     out_rows = s.execute(text(
@@ -3215,14 +3222,20 @@ def admin_invoices():
                         }
                         for r in out_rows
                     ]
+                # Rejected timesheets are treated as "decided, won't be
+                # billed" — they don't block. So a tile is "ready" when
+                # approved + rejected covers every row in the month.
+                ready = (approved + rejected) >= total
                 autogen_tiles.append({
                     "engagement_id": eng.id,
                     "engagement_ref": getattr(eng, "ref", "") or "",
                     "engagement_name": eng.name or "",
                     "client_name": eng.client or "",
                     "approved": approved,
+                    "rejected": rejected,
+                    "has_rejected": rejected > 0,
                     "total": total,
-                    "ready": approved == total,
+                    "ready": ready,
                     "year": year,
                     "month": month,
                     "outstanding": outstanding,
@@ -3338,7 +3351,10 @@ def _ensure_client_linked(s, engagement) -> "Client":
 
 def _check_timesheets_ready(s, engagement_id: int, year: int, month: int) -> list:
     """IR 8 — return list of (id, status) for timesheets in the given
-    calendar month that are NOT yet Approved. Empty list = ready to invoice."""
+    calendar month that are still BLOCKING invoice generation, i.e. not
+    yet Approved AND not Rejected. Rejected timesheets are treated as
+    "decided, won't be billed" — they don't block generation, they're
+    just excluded from the invoice figures."""
     import calendar as _cal
     month_start = date(year, month, 1)
     month_end = date(year, month, _cal.monthrange(year, month)[1])
@@ -3346,9 +3362,24 @@ def _check_timesheets_ready(s, engagement_id: int, year: int, month: int) -> lis
         "SELECT id, status, period_start FROM timesheets "
         "WHERE engagement_id = :eid "
         "AND period_start >= :ms AND period_end <= :me "
-        "AND LOWER(status) != 'approved'"
+        "AND LOWER(status) NOT IN ('approved', 'rejected')"
     ).bindparams(eid=engagement_id, ms=month_start, me=month_end)).all()
     return [{"id": r.id, "status": r.status, "period_start": r.period_start} for r in rows]
+
+
+def _count_rejected_timesheets(s, engagement_id: int, year: int, month: int) -> int:
+    """Count Rejected timesheets in the calendar month. Used by the
+    Ready-to-generate tile to display "(N rejected, excluded)" and to
+    trigger the JS confirm on the Generate button."""
+    import calendar as _cal
+    month_start = date(year, month, 1)
+    month_end = date(year, month, _cal.monthrange(year, month)[1])
+    return s.execute(text(
+        "SELECT COUNT(*) FROM timesheets "
+        "WHERE engagement_id = :eid "
+        "AND period_start >= :ms AND period_end <= :me "
+        "AND LOWER(status) = 'rejected'"
+    ).bindparams(eid=engagement_id, ms=month_start, me=month_end)).scalar() or 0
 
 
 def _invoice_period_for_month(engagement, year: int, month: int):
