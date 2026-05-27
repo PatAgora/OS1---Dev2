@@ -353,16 +353,12 @@
             </div>
           </div>
           <form method="POST" action="{{ url_for('admin_auto_generate_invoice', engagement_id=tile.engagement_id, year=tile.year, month=tile.month) }}"
-                {% if tile.has_rejected %}
-                onsubmit="return confirm('There is a rejected timesheet that has not been re-submitted. Are you sure you want to generate the invoice?\n\nThe rejected timesheet will be excluded from the invoice figures.\n\nProject: {{ tile.client_name }} / {{ tile.engagement_name }} ({{ '%04d-%02d' % (tile.year, tile.month) }})');"
-                {% else %}
-                onsubmit="return confirm('Auto-generate invoice for ENG-{{ tile.engagement_id }} ({{ tile.engagement_ref or tile.engagement_name }}) — {{ tile.client_name }} / {{ tile.engagement_name }} for {{ '%04d-%02d' % (tile.year, tile.month) }}?\n\nThis creates ONE invoice for THIS engagement only. Other engagements for the same client are billed separately.');"
-                {% endif %}>
+                onsubmit="return confirm('Auto-generate invoice for ENG-{{ tile.engagement_id }} ({{ tile.engagement_ref or tile.engagement_name }}) — {{ tile.client_name }} / {{ tile.engagement_name }} for {{ '%04d-%02d' % (tile.year, tile.month) }}?\n\nThis creates ONE invoice for THIS engagement only. Other engagements for the same client are billed separately.');">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            {% set decided = tile.approved + tile.rejected %}
+            {% set missing = tile.expected - tile.approved %}
             <button class="btn btn-sm btn-primary"
                     {% if not tile.ready %}disabled
-                    title="Cannot generate — {{ decided }} of {{ tile.expected }} expected timesheets decided. {{ tile.expected - decided }} still outstanding (Draft / Submitted / not yet submitted). Approve or reject every expected timesheet before generating."
+                    title="Cannot generate — {{ tile.approved }} of {{ tile.expected }} expected timesheets are Approved. {{ missing }} still outstanding (Draft / Submitted / Rejected / not yet submitted). Every timesheet — including any Rejected ones — must be re-submitted and approved before generating."
                     {% endif %}>
               <i class="fas fa-bolt me-1"></i>Generate
             </button>

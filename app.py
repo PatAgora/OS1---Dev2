@@ -3252,15 +3252,12 @@ def admin_invoices():
                         }
                         for r in out_rows
                     ]
-                # Rejected timesheets are treated as "decided, won't be
-                # billed" — they don't block. Ready (Generate enabled)
-                # requires the FULL expected coverage to be decided:
-                # every expected timesheet must be Approved or Rejected.
-                # 10/40 approved is NOT ready, even with zero Draft/Submitted
-                # rows, because 30 of the expected timesheets are simply
-                # missing — billing would under-charge.
-                blocking = total - approved - rejected
-                ready = (approved + rejected) >= expected and blocking <= 0
+                # Every timesheet must be Approved before Generate
+                # enables. Draft / Submitted / Rejected all block —
+                # Rejected has to be re-submitted and approved before
+                # the project can be invoiced.
+                blocking = total - approved
+                ready = (approved >= expected) and blocking <= 0
                 autogen_tiles.append({
                     "engagement_id": eng.id,
                     "engagement_ref": getattr(eng, "ref", "") or "",
@@ -3386,11 +3383,11 @@ def _ensure_client_linked(s, engagement) -> "Client":
 # ============================================================================
 
 def _check_timesheets_ready(s, engagement_id: int, year: int, month: int) -> list:
-    """IR 8 — return list of (id, status) for timesheets in the given
-    calendar month that are still BLOCKING invoice generation, i.e. not
-    yet Approved AND not Rejected. Rejected timesheets are treated as
-    "decided, won't be billed" — they don't block generation, they're
-    just excluded from the invoice figures."""
+    """IR 8 — return list of (id, status) for timesheets in the month
+    that are BLOCKING invoice generation. Every timesheet must be
+    Approved before an invoice can be raised — Draft, Submitted, and
+    Rejected all block. (A Rejected timesheet must be re-submitted and
+    approved before invoicing.)"""
     import calendar as _cal
     month_start = date(year, month, 1)
     month_end = date(year, month, _cal.monthrange(year, month)[1])
@@ -3398,7 +3395,7 @@ def _check_timesheets_ready(s, engagement_id: int, year: int, month: int) -> lis
         "SELECT id, status, period_start FROM timesheets "
         "WHERE engagement_id = :eid "
         "AND period_start >= :ms AND period_end <= :me "
-        "AND LOWER(status) NOT IN ('approved', 'rejected')"
+        "AND LOWER(status) <> 'approved'"
     ).bindparams(eid=engagement_id, ms=month_start, me=month_end)).all()
     return [{"id": r.id, "status": r.status, "period_start": r.period_start} for r in rows]
 
