@@ -516,22 +516,54 @@
                     <th>Invoice #</th>
                     <th>Client</th>
                     <th>Engagement</th>
+                    <th>Invoice Period</th>
                     <th>Date</th>
                     <th>Due Date</th>
                     <th>Amount</th>
+                    <th>Outstanding</th>
                     <th>Status</th>
                     <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
                 {% for inv in invoices|default([]) %}
+                {# Invoice Period: from period_start -> period_end; "%d %b"
+                   on the left if both fall in the same year (otherwise full).
+                   Falls back to invoice_date for legacy rows that have no
+                   persisted period. #}
+                {% set _ps = inv.period_start %}
+                {% set _pe = inv.period_end %}
+                {% if _ps and _pe %}
+                    {% if _ps.year == _pe.year %}
+                        {% set _period_text = _ps.strftime('%d %b') ~ ' – ' ~ _pe.strftime('%d %b %Y') %}
+                    {% else %}
+                        {% set _period_text = _ps.strftime('%d %b %Y') ~ ' – ' ~ _pe.strftime('%d %b %Y') %}
+                    {% endif %}
+                {% elif inv.invoice_date %}
+                    {% set _period_text = inv.invoice_date.strftime('%b %Y') %}
+                {% else %}
+                    {% set _period_text = '—' %}
+                {% endif %}
+                {# Outstanding balance: full total when Draft/Sent/Overdue,
+                   zero on Paid, dash on Void. #}
+                {% set _st = (inv.status or '')|lower %}
                 <tr data-client="{{ inv.client_name }}" data-engagement="{{ inv.engagement_id or '' }}" data-status="{{ inv.status|default('Draft') }}">
                     <td><span class="invoice-number">{{ inv.invoice_number }}</span></td>
                     <td>{{ inv.client_name }}</td>
                     <td>{{ inv.engagement_name }}</td>
+                    <td>{{ _period_text }}</td>
                     <td>{{ inv.invoice_date.strftime('%d %b %Y') if inv.invoice_date else '—' }}</td>
                     <td>{{ inv.due_date.strftime('%d %b %Y') if inv.due_date else '—' }}</td>
                     <td><span class="amount-value">£{{ "%.2f"|format(inv.total_amount or 0) }}</span></td>
+                    <td>
+                        {% if _st == 'void' %}
+                            <span class="text-muted">—</span>
+                        {% elif _st == 'paid' %}
+                            <span class="amount-value" style="color:#166534;">£0.00</span>
+                        {% else %}
+                            <span class="amount-value" style="color:#991b1b;">£{{ "%.2f"|format(inv.total_amount or 0) }}</span>
+                        {% endif %}
+                    </td>
                     <td><span class="status-badge status-{{ inv.status|lower }}">{{ inv.status }}</span></td>
                     <td>
                         <a href="{{ url_for('admin_view_invoice', invoice_id=inv.id) }}" class="action-btn" title="View"><i class="fas fa-eye"></i></a>
