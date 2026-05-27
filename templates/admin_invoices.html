@@ -150,20 +150,42 @@
     .invoice-table {
         width: 100%;
         border-collapse: collapse;
+        font-size: 0.82rem;
+        line-height: 1.3;
     }
     .invoice-table th,
     .invoice-table td {
-        padding: 0.75rem 1rem;
+        padding: 0.45rem 0.55rem;
         text-align: left;
         border-bottom: 1px solid #e5e7eb;
+        vertical-align: middle;
+        white-space: nowrap;
     }
     .invoice-table th {
         background: #f8fafc;
         font-weight: 600;
         color: #374151;
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
     }
     .invoice-table tr:hover {
         background: #f9fafb;
+    }
+    /* Actions column: icon-only buttons flow left-to-right and wrap
+       onto a second row only after at least 3 fit. */
+    .invoice-table td.actions-cell,
+    .invoice-table th.actions-col {
+        min-width: 130px;
+    }
+    .invoice-table td.actions-cell {
+        white-space: normal;
+    }
+    .actions-cell .actions-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        align-items: center;
     }
     .status-badge {
         padding: 0.25rem 0.75rem;
@@ -188,21 +210,29 @@
         color: #991b1b;
     }
     .action-btn {
-        padding: 0.375rem 0.75rem;
-        border-radius: 6px;
-        font-size: 0.875rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        border-radius: 5px;
+        font-size: 0.78rem;
         font-weight: 500;
         border: none;
         cursor: pointer;
-        transition: all 0.2s;
+        transition: all 0.15s;
         background: #e5e7eb;
         color: #374151;
+        text-decoration: none;
+        line-height: 1;
     }
     .action-btn:hover {
         background: #d1d5db;
     }
     .action-btn i {
-        margin-right: 0.25rem;
+        margin: 0;
+        font-size: 0.82rem;
     }
     .empty-state {
         text-align: center;
@@ -522,7 +552,7 @@
                     <th>Amount</th>
                     <th>Outstanding</th>
                     <th>Status</th>
-                    <th>Actions</th>
+                    <th class="actions-col">Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -565,7 +595,8 @@
                         {% endif %}
                     </td>
                     <td><span class="status-badge status-{{ inv.status|lower }}">{{ inv.status }}</span></td>
-                    <td>
+                    <td class="actions-cell">
+                      <div class="actions-row">
                         <a href="{{ url_for('admin_view_invoice', invoice_id=inv.id) }}" class="action-btn" title="View"><i class="fas fa-eye"></i></a>
                         {% if inv.status not in ['Paid', 'Void'] %}
                         <a href="{{ url_for('admin_edit_invoice', invoice_id=inv.id) }}" class="action-btn" title="Edit"><i class="fas fa-edit"></i></a>
@@ -601,6 +632,7 @@
                             <i class="fas fa-ban"></i>
                         </button>
                         {% endif %}
+                      </div>
                     </td>
                 </tr>
                 {% endfor %}
