@@ -3192,6 +3192,29 @@ def admin_invoices():
                     "SELECT COUNT(*) FROM timesheets WHERE engagement_id = :eid "
                     "AND period_start >= :ms AND period_end <= :me AND LOWER(status) = 'approved'"
                 ).bindparams(eid=eng.id, ms=ms, me=me)).scalar() or 0
+                # IR 9 — drill-down: list the timesheets NOT yet approved
+                # so the collapsible tile body can show them. Joins
+                # candidates so the admin sees the Associate name.
+                outstanding = []
+                if approved < total:
+                    out_rows = s.execute(text(
+                        "SELECT t.id, t.status, t.period_start, c.name AS associate_name "
+                        "FROM timesheets t "
+                        "LEFT JOIN candidates c ON c.id = t.user_id "
+                        "WHERE t.engagement_id = :eid "
+                        "  AND t.period_start >= :ms AND t.period_end <= :me "
+                        "  AND LOWER(t.status) <> 'approved' "
+                        "ORDER BY t.period_start, c.name"
+                    ).bindparams(eid=eng.id, ms=ms, me=me)).all()
+                    outstanding = [
+                        {
+                            "id": r.id,
+                            "status": r.status or "Draft",
+                            "period_start": r.period_start,
+                            "associate_name": r.associate_name or "(unknown)",
+                        }
+                        for r in out_rows
+                    ]
                 autogen_tiles.append({
                     "engagement_id": eng.id,
                     "engagement_name": eng.name or "",
@@ -3201,6 +3224,7 @@ def admin_invoices():
                     "ready": approved == total,
                     "year": year,
                     "month": month,
+                    "outstanding": outstanding,
                 })
             except Exception:
                 continue

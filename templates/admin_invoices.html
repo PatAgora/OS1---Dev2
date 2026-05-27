@@ -313,13 +313,29 @@
     <div class="col-md-4">
       <div class="card border-0 shadow-sm">
         <div class="card-body py-2 px-3 d-flex justify-content-between align-items-center">
-          <div>
+          <div style="flex:1 1 auto;">
             <div style="font-size:0.85rem; font-weight:600;">{{ tile.client_name }}</div>
             <div class="text-muted small">{{ tile.engagement_name }}</div>
             <div class="mt-1">
-              <span class="badge {{ 'bg-success' if tile.ready else 'bg-warning text-dark' }}">
+              {# IR 9 — counter is a click-to-expand disclosure when
+                 there are outstanding (non-Approved) timesheets in
+                 the month. Ready (all approved) tiles just show the
+                 plain badge. #}
+              {% if tile.outstanding %}
+              <button type="button" class="btn btn-sm p-0 border-0 bg-transparent"
+                      data-bs-toggle="collapse" data-bs-target="#autogen-out-{{ tile.engagement_id }}"
+                      aria-expanded="false" aria-controls="autogen-out-{{ tile.engagement_id }}"
+                      title="Click to see outstanding timesheets">
+                <span class="badge bg-warning text-dark">
+                  {{ tile.approved }} / {{ tile.total }} approved
+                  <i class="fas fa-chevron-down ms-1" style="font-size:0.7em;"></i>
+                </span>
+              </button>
+              {% else %}
+              <span class="badge bg-success">
                 {{ tile.approved }} / {{ tile.total }} approved
               </span>
+              {% endif %}
             </div>
           </div>
           <form method="POST" action="{{ url_for('admin_auto_generate_invoice', engagement_id=tile.engagement_id, year=tile.year, month=tile.month) }}"
@@ -330,6 +346,31 @@
             </button>
           </form>
         </div>
+        {% if tile.outstanding %}
+        <div id="autogen-out-{{ tile.engagement_id }}" class="collapse">
+          <div class="card-body pt-0 pb-3 px-3">
+            <div class="text-muted small fw-semibold mb-1">
+              {{ tile.outstanding|length }} outstanding timesheet{{ '' if tile.outstanding|length == 1 else 's' }}:
+            </div>
+            <ul class="list-unstyled mb-0 small">
+              {% for o in tile.outstanding %}
+              <li class="d-flex justify-content-between align-items-center py-1" style="border-top:1px solid #eef2f7;">
+                <span>
+                  <a href="{{ url_for('admin_edit_timesheet_on_behalf', ts_id=o.id) }}" class="text-decoration-none">TS-{{ '%04d' % o.id }}</a>
+                  &middot; {{ o.associate_name }}
+                  &middot; WC {{ o.period_start.strftime('%d/%m/%Y') if o.period_start else '—' }}
+                </span>
+                {% set sl = (o.status or '')|lower %}
+                {% if sl == 'submitted' %}<span class="badge bg-primary">Submitted</span>
+                {% elif sl == 'rejected' %}<span class="badge bg-danger">Declined</span>
+                {% elif sl == 'draft' %}<span class="badge bg-secondary">Draft</span>
+                {% else %}<span class="badge bg-secondary">{{ o.status }}</span>{% endif %}
+              </li>
+              {% endfor %}
+            </ul>
+          </div>
+        </div>
+        {% endif %}
       </div>
     </div>
     {% endfor %}
