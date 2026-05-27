@@ -4698,29 +4698,38 @@ def admin_reopen_invoice(invoice_id: int):
 @app.route("/admin/invoices/<int:invoice_id>/status", methods=["POST"])
 @login_required
 def admin_update_invoice_status(invoice_id):
-    """Update invoice status"""
+    """Update invoice status. Restricted to the canonical 5-value set
+    (Draft / Sent / Paid / Overdue / Void). Anything else is refused
+    so a stray POST can't poison the listing's status filter."""
+    VALID_STATUSES = ("Draft", "Sent", "Paid", "Overdue", "Void")
     with Session(engine) as s:
         invoice = s.get(Invoice, invoice_id)
         if not invoice:
             flash("Invoice not found", "error")
             return redirect(url_for('admin_invoices'))
-        
-        new_status = request.form.get("status", invoice.status)
+
+        new_status = (request.form.get("status") or invoice.status or "").strip()
+        if new_status not in VALID_STATUSES:
+            flash(
+                f"Invalid status {new_status!r}. Allowed: {', '.join(VALID_STATUSES)}.",
+                "warning",
+            )
+            return redirect(url_for('admin_invoices'))
         old_status = invoice.status
         invoice.status = new_status
-        
+
         if new_status == "Paid" and not invoice.paid_date:
             invoice.paid_date = datetime.datetime.utcnow()
-        elif new_status == "Pending" and not invoice.sent_at:
+        elif new_status == "Sent" and not invoice.sent_at:
             invoice.sent_at = datetime.datetime.utcnow()
-        
+
         s.commit()
-        
+
         log_audit_event('update', 'billing', f'Invoice {invoice.invoice_number} status: {old_status} → {new_status}',
                       'invoice', invoice.id)
-        
+
         flash(f"✅ Invoice status updated to {new_status}", "success")
-    
+
     return redirect(url_for('admin_invoices'))
 
 @app.route("/admin/invoices/<int:invoice_id>/mark-paid", methods=["POST"])
@@ -5531,6 +5540,15 @@ def admin_send_invoice(invoice_id):
         else:
             final_html = email_html
 
+        # Determine before-state so we can audit-log this as a "resend"
+        # rather than "send" when the invoice has already been sent
+        # before. Spec IR 32: a resend reuses the same invoice (same
+        # number, same row) but is logged distinctly so the audit trail
+        # shows every dispatch attempt.
+        was_already_sent = (
+            (invoice.status or "").lower() == "sent"
+            or invoice.sent_at is not None
+        )
         # Req 53 / IR 27 — invoice emails come from finance@. Send to
         # each recipient individually and track outcomes so a partial
         # failure (one bad address) doesn't prevent the status flip.
@@ -5566,9 +5584,15 @@ def admin_send_invoice(invoice_id):
             except Exception:
                 current_app.logger.exception("Send-time PDF persist failed")
             s.commit()
+            # IR 32 — distinguish resend from initial send in the audit
+            # trail. The Invoice row itself is unchanged in identity
+            # (same id, same number); only the audit log records the
+            # repeat dispatch.
+            audit_event = "resend" if was_already_sent else "send"
+            verb = "resent" if was_already_sent else "sent"
             try:
-                log_audit_event("send", "billing",
-                                f"Invoice {invoice.invoice_number} sent to {len(sent_ok)} recipient(s)"
+                log_audit_event(audit_event, "billing",
+                                f"Invoice {invoice.invoice_number} {verb} to {len(sent_ok)} recipient(s)"
                                 + (f" ({len(send_failures)} failed)" if send_failures else ""),
                                 "invoice", invoice.id,
                                 {"recipients": sent_ok, "failed": send_failures,
@@ -5578,12 +5602,16 @@ def admin_send_invoice(invoice_id):
             if send_failures:
                 fail_summary = "; ".join(f"{a}: {err}" for a, err in send_failures)
                 flash(
-                    f"Invoice {invoice.invoice_number} sent to {', '.join(sent_ok)}. "
-                    f"Status updated to Sent. Some recipients failed: {fail_summary}",
+                    f"Invoice {invoice.invoice_number} {verb} to {', '.join(sent_ok)}. "
+                    + ("" if was_already_sent else "Status updated to Sent. ")
+                    + f"Some recipients failed: {fail_summary}",
                     "warning",
                 )
             else:
-                flash(f"Invoice {invoice.invoice_number} sent to {', '.join(sent_ok)}. Status updated to Sent.", "success")
+                if was_already_sent:
+                    flash(f"Invoice {invoice.invoice_number} re-sent to {', '.join(sent_ok)}.", "success")
+                else:
+                    flash(f"Invoice {invoice.invoice_number} sent to {', '.join(sent_ok)}. Status updated to Sent.", "success")
         else:
             # Total failure — keep status as Draft so the admin can retry.
             fail_summary = "; ".join(f"{a}: {err}" for a, err in send_failures) or "no recipients accepted"
@@ -10672,7 +10700,17 @@ class Invoice(Base):
     vat_amount = Column(Float, default=0.0)
     total_amount = Column(Float, default=0.0)
     
-    # Status: Draft, Pending, Paid, Overdue, Cancelled
+    # IR 33 — canonical status set. Every invoice MUST be in exactly one:
+    #   Draft   — generated but not yet sent
+    #   Sent    — issued to the client (admin_send_invoice flips here)
+    #   Paid    — payment received and confirmed (admin_mark_invoice_paid)
+    #   Overdue — past due_date and still unpaid (nightly cron flips Sent
+    #             rows where due_date < today)
+    #   Void    — cancelled (admin_void_invoice; mandatory reason captured
+    #             in void_reason)
+    # Legacy values "Pending" and "Cancelled" are renamed to Sent / Void
+    # by the boot-time migration. The admin_update_invoice_status route
+    # validates against this exact set so no other value can be saved.
     status = Column(String(50), default="Draft")
     
     # Details
