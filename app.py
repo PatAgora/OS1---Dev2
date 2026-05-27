@@ -3177,17 +3177,32 @@ def admin_invoices():
                 pass
         for eng in s.scalars(select(Engagement).where(Engagement.status == "Active")).all():
             try:
-                # Total expected = number of timesheets that exist in this
-                # month for this engagement. Approved count = how many are Approved.
                 import calendar as _cal
                 ms = datetime.date(year, month, 1)
                 me = datetime.date(year, month, _cal.monthrange(year, month)[1])
-                total = s.execute(text(
-                    "SELECT COUNT(*) FROM timesheets WHERE engagement_id = :eid "
-                    "AND period_start >= :ms AND period_end <= :me"
+                # Expected = (active associates on this engagement during
+                # the month) * (Mondays in the month). E.g. 10 people on
+                # a project for May 2026 (4 Mondays) -> 40 expected.
+                # Active associate = Application -> Job for this engagement
+                # with an "on assignment" status, whose assignment window
+                # overlaps the month (assignment_start_date <= month_end
+                # AND (assignment_end_date IS NULL OR >= month_start)).
+                active_assoc = s.execute(text(
+                    "SELECT COUNT(DISTINCT a.candidate_id) "
+                    "FROM applications a "
+                    "JOIN jobs j ON j.id = a.job_id "
+                    "WHERE j.engagement_id = :eid "
+                    "  AND a.status IN ('Placed','Contract Signed','On Assignment',"
+                    "                   'Active','Contracted','Hired') "
+                    "  AND (a.assignment_start_date IS NULL OR a.assignment_start_date <= :me) "
+                    "  AND (a.assignment_end_date IS NULL OR a.assignment_end_date >= :ms)"
                 ).bindparams(eid=eng.id, ms=ms, me=me)).scalar() or 0
-                if total == 0:
-                    continue
+                # Mondays in the month — one timesheet per person per week.
+                weeks_in_month = sum(
+                    1 for d in range(1, _cal.monthrange(year, month)[1] + 1)
+                    if datetime.date(year, month, d).weekday() == 0
+                )
+                expected = active_assoc * weeks_in_month
                 approved = s.execute(text(
                     "SELECT COUNT(*) FROM timesheets WHERE engagement_id = :eid "
                     "AND period_start >= :ms AND period_end <= :me AND LOWER(status) = 'approved'"
@@ -3196,6 +3211,21 @@ def admin_invoices():
                     "SELECT COUNT(*) FROM timesheets WHERE engagement_id = :eid "
                     "AND period_start >= :ms AND period_end <= :me AND LOWER(status) = 'rejected'"
                 ).bindparams(eid=eng.id, ms=ms, me=me)).scalar() or 0
+                # Total of timesheets that physically exist — kept so the
+                # outstanding-list logic still works.
+                total = s.execute(text(
+                    "SELECT COUNT(*) FROM timesheets WHERE engagement_id = :eid "
+                    "AND period_start >= :ms AND period_end <= :me"
+                ).bindparams(eid=eng.id, ms=ms, me=me)).scalar() or 0
+                # Skip engagements with neither people on assignment nor
+                # any timesheets in the month — nothing to show.
+                if expected == 0 and total == 0:
+                    continue
+                # Fallback: if no assignment records but timesheets exist
+                # (legacy projects), use the actual count so the denom is
+                # at least the observed activity.
+                if expected == 0:
+                    expected = total
                 # IR 9 — drill-down: list the timesheets NOT yet approved
                 # so the collapsible tile body can show them. Joins
                 # candidates so the admin sees the Associate name.
@@ -3223,9 +3253,13 @@ def admin_invoices():
                         for r in out_rows
                     ]
                 # Rejected timesheets are treated as "decided, won't be
-                # billed" — they don't block. So a tile is "ready" when
-                # approved + rejected covers every row in the month.
-                ready = (approved + rejected) >= total
+                # billed" — they don't block. Ready (Generate enabled)
+                # requires every existing timesheet to be Approved or
+                # Rejected — i.e. no Draft / Submitted / Pending rows
+                # blocking. The expected denominator is just for visibility;
+                # it doesn't gate Generate (people sometimes don't submit).
+                blocking = total - approved - rejected
+                ready = blocking <= 0
                 autogen_tiles.append({
                     "engagement_id": eng.id,
                     "engagement_ref": getattr(eng, "ref", "") or "",
@@ -3234,6 +3268,7 @@ def admin_invoices():
                     "approved": approved,
                     "rejected": rejected,
                     "has_rejected": rejected > 0,
+                    "expected": expected,
                     "total": total,
                     "ready": ready,
                     "year": year,

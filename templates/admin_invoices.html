@@ -336,13 +336,13 @@
                       aria-expanded="false" aria-controls="autogen-out-{{ tile.engagement_id }}"
                       title="Click to see outstanding timesheets">
                 <span class="badge {% if tile.ready %}bg-success{% else %}bg-warning text-dark{% endif %}">
-                  {{ tile.approved }} / {{ tile.total }} approved
+                  {{ tile.approved }} / {{ tile.expected }} approved
                   <i class="fas fa-chevron-down ms-1" style="font-size:0.7em;"></i>
                 </span>
               </button>
               {% else %}
               <span class="badge bg-success">
-                {{ tile.approved }} / {{ tile.total }} approved
+                {{ tile.approved }} / {{ tile.expected }} approved
               </span>
               {% endif %}
               {% if tile.has_rejected %}
