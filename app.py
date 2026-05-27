@@ -5589,7 +5589,11 @@ def admin_send_invoice(invoice_id):
             fail_summary = "; ".join(f"{a}: {err}" for a, err in send_failures) or "no recipients accepted"
             flash(f"Failed to send invoice {invoice.invoice_number}: {fail_summary}", "danger")
 
-    return redirect(url_for('admin_view_invoice', invoice_id=invoice_id))
+    # Land back on the invoice listing after a Send (success, partial,
+    # or total failure) so the admin can pick the next action — the
+    # flash carries the outcome and the listing's status column shows
+    # the new Sent state for the row.
+    return redirect(url_for('admin_invoices'))
 
 
 @app.route("/admin/invoices/<int:invoice_id>/resend", methods=["POST"])
