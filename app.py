@@ -3419,16 +3419,26 @@ def _count_rejected_timesheets(s, engagement_id: int, year: int, month: int) -> 
 
 def _invoice_period_for_month(engagement, year: int, month: int):
     """IR 13 — invoice period = MAX(engagement.start, month_start) to
-    MIN(engagement.end or today, month_end). Returns (period_start, period_end)
-    as date objects."""
+    MIN(engagement.end or month_end, month_end). Returns (period_start,
+    period_end) as date objects.
+
+    Partial-month support:
+      Project starts 14 Apr → April period = 14 Apr → 30 Apr
+      Project ends 16 Jun  → June period  =  1 Jun → 16 Jun
+
+    The period is NOT capped at today's date — a continuing
+    engagement's May invoice covers 1 May → 31 May even if
+    generated mid-May. Capping at today silently excluded timesheets
+    whose week ended after generation day (e.g. the week 25 May →
+    31 May would be dropped from an invoice raised on 27 May),
+    which in turn dropped all of that week's expenses."""
     import calendar as _cal
     month_start = date(year, month, 1)
     month_end = date(year, month, _cal.monthrange(year, month)[1])
     eng_start = engagement.start_date.date() if engagement and engagement.start_date and hasattr(engagement.start_date, 'date') else (engagement.start_date if engagement else None)
     eng_end = engagement.end_date.date() if engagement and engagement.end_date and hasattr(engagement.end_date, 'date') else (engagement.end_date if engagement else None)
     period_start = max(eng_start, month_start) if eng_start else month_start
-    today = date.today()
-    period_end = min((eng_end or today), month_end, today)
+    period_end = min((eng_end or month_end), month_end)
     if period_end < period_start:
         period_end = period_start
     return period_start, period_end
