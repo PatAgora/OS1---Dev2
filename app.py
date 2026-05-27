@@ -4986,16 +4986,39 @@ def _generate_invoice_pdf(invoice, line_items):
         else:
             vat_pct_str = f"{vat_pct:.0f}%"
         vat_amt_str = f"GBP {vat_amount:,.2f}"
-        desc_short = _safe(desc[:60])
+        desc_safe = _safe(desc)
+        # Pre-flight: how many wrapped lines does the description need
+        # at this column width? `dry_run=True, output="LINES"` returns
+        # the broken-text list without drawing. Row height = lines *
+        # line height so the description multi_cell and the other five
+        # cells share the same bottom border.
+        line_h = 7
+        try:
+            broken = pdf.multi_cell(col_widths[0], line_h, "  " + desc_safe,
+                                    dry_run=True, output="LINES")
+            n_lines = max(1, len(broken or []))
+        except Exception:
+            n_lines = 1
+        row_h = n_lines * line_h
         x = 12
-        row_vals = [desc_short, day_rate_str, units_str, net_str, vat_pct_str, vat_amt_str]
-        for i, v in enumerate(row_vals):
+        row_vals = [desc_safe, day_rate_str, units_str, net_str, vat_pct_str, vat_amt_str]
+        # 1) Other five cells first — full row_h tall with bottom border,
+        #    so their right-aligned numbers and the border line up
+        #    correctly when the description wraps to multiple lines.
+        x = 12 + col_widths[0]
+        for i in range(1, len(row_vals)):
             pdf.set_xy(x, row_y)
-            pdf.cell(col_widths[i], 7,
-                     ("  " + v) if aligns[i] == "L" else v,
+            pdf.cell(col_widths[i], row_h, row_vals[i],
                      border="B", align=aligns[i])
             x += col_widths[i]
-        pdf.set_y(row_y + 7)
+        # 2) Description as a wrapping multi_cell — fpdf2 draws the
+        #    bottom border on the final wrapped line, which matches
+        #    row_y + row_h because line_h is the same.
+        pdf.set_xy(12, row_y)
+        pdf.multi_cell(col_widths[0], line_h, "  " + desc_safe,
+                       border="B", align="L",
+                       new_x="LMARGIN", new_y="NEXT")
+        pdf.set_y(row_y + row_h)
 
     if not line_items:
         pdf.set_text_color(*MUTED)
@@ -5390,9 +5413,13 @@ def admin_send_invoice(invoice_id):
         # Use editable body if provided, otherwise the default templated HTML.
         final_html = body or email_html
 
-        try:
-            # Req 53 / IR 27 — invoice emails come from finance@.
-            for addr in recipients:
+        # Req 53 / IR 27 — invoice emails come from finance@. Send to
+        # each recipient individually and track outcomes so a partial
+        # failure (one bad address) doesn't prevent the status flip.
+        sent_ok = []
+        send_failures = []
+        for addr in recipients:
+            try:
                 send_email(
                     to_email=addr,
                     subject=subject,
@@ -5400,14 +5427,21 @@ def admin_send_invoice(invoice_id):
                     attachments=[(f"{invoice.invoice_number}.pdf", pdf_bytes, "application/pdf")],
                     from_email=FINANCE_FROM,
                 )
-            # Phase 7 / IR 31 — status flips to Sent (not Pending — that's
-            # legacy naming; the boot-time migration also renames any
-            # historical 'Pending' rows). sent_by + sent_recipients stamped.
+                sent_ok.append(addr)
+            except Exception as e:
+                send_failures.append((addr, f"{type(e).__name__}: {e}"))
+                current_app.logger.exception(f"Invoice send to {addr} failed")
+        # Phase 7 / IR 31 — status flips to Sent when at least one
+        # recipient successfully received the invoice. (Legacy 'Pending'
+        # was renamed to 'Sent' by the boot-time migration.) If every
+        # recipient failed, status stays as-is and the admin sees the
+        # errors in the flash so they can retry.
+        if sent_ok:
             invoice.status = "Sent"
             if not invoice.sent_at:
                 invoice.sent_at = datetime.datetime.utcnow()
             invoice.sent_by = current_user.id
-            invoice.sent_recipients = json.dumps(recipients)
+            invoice.sent_recipients = json.dumps(sent_ok)
             # Phase 9 / IR 42 — second 'sent' copy of the PDF for audit.
             try:
                 _persist_invoice_pdf(s, invoice, pdf_bytes, subtype="sent")
@@ -5416,14 +5450,26 @@ def admin_send_invoice(invoice_id):
             s.commit()
             try:
                 log_audit_event("send", "billing",
-                                f"Invoice {invoice.invoice_number} sent to {len(recipients)} recipient(s)",
+                                f"Invoice {invoice.invoice_number} sent to {len(sent_ok)} recipient(s)"
+                                + (f" ({len(send_failures)} failed)" if send_failures else ""),
                                 "invoice", invoice.id,
-                                {"recipients": recipients, "subject": subject})
+                                {"recipients": sent_ok, "failed": send_failures,
+                                 "subject": subject})
             except Exception:
                 pass
-            flash(f"Invoice {invoice.invoice_number} sent to {', '.join(recipients)}", "success")
-        except Exception as e:
-            flash(f"Failed to send: {e}", "danger")
+            if send_failures:
+                fail_summary = "; ".join(f"{a}: {err}" for a, err in send_failures)
+                flash(
+                    f"Invoice {invoice.invoice_number} sent to {', '.join(sent_ok)}. "
+                    f"Status updated to Sent. Some recipients failed: {fail_summary}",
+                    "warning",
+                )
+            else:
+                flash(f"Invoice {invoice.invoice_number} sent to {', '.join(sent_ok)}. Status updated to Sent.", "success")
+        else:
+            # Total failure — keep status as Draft so the admin can retry.
+            fail_summary = "; ".join(f"{a}: {err}" for a, err in send_failures) or "no recipients accepted"
+            flash(f"Failed to send invoice {invoice.invoice_number}: {fail_summary}", "danger")
 
     return redirect(url_for('admin_view_invoice', invoice_id=invoice_id))
 

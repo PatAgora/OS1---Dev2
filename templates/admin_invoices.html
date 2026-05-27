@@ -529,8 +529,8 @@
                     <td><span class="invoice-number">{{ inv.invoice_number }}</span></td>
                     <td>{{ inv.client_name }}</td>
                     <td>{{ inv.engagement_name }}</td>
-                    <td>{{ inv.invoice_date }}</td>
-                    <td>{{ inv.due_date }}</td>
+                    <td>{{ inv.invoice_date.strftime('%d %b %Y') if inv.invoice_date else '—' }}</td>
+                    <td>{{ inv.due_date.strftime('%d %b %Y') if inv.due_date else '—' }}</td>
                     <td><span class="amount-value">£{{ "%.2f"|format(inv.total_amount or 0) }}</span></td>
                     <td><span class="status-badge status-{{ inv.status|lower }}">{{ inv.status }}</span></td>
                     <td>
