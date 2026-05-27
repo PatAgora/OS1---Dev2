@@ -5615,6 +5615,17 @@ def admin_clients_new():
     if not (2 <= len(code) <= 5) or not code.isalnum():
         flash("Client code must be 2-5 alphanumeric characters.", "warning")
         return redirect(url_for("admin_clients"))
+    # Capture the same billing defaults the Engagement Billing tile
+    # collects — address, postcode, company reg, VAT, invoice recipient
+    # emails. These live on the Client row so future engagements for
+    # the same client can pre-fill rather than re-type.
+    billing_address_line1 = (request.form.get("billing_address_line1") or "").strip()
+    billing_address_line2 = (request.form.get("billing_address_line2") or "").strip()
+    billing_city = (request.form.get("billing_city") or "").strip()
+    billing_postcode = (request.form.get("billing_postcode") or "").strip()
+    company_reg = (request.form.get("company_reg") or "").strip()
+    vat_number = (request.form.get("vat_number") or "").strip()
+    invoice_recipient_emails = (request.form.get("invoice_recipient_emails") or "").strip()
     with Session(engine) as s:
         # Uniqueness checks before insert give friendlier flashes than waiting
         # for the DB UNIQUE constraint to fire.
@@ -5624,12 +5635,22 @@ def admin_clients_new():
         if s.scalar(select(Client).where(Client.client_code == code)):
             flash(f"Client code {code!r} is already in use.", "warning")
             return redirect(url_for("admin_clients"))
-        c = Client(name=name, client_code=code, code_confirmed=True)
+        c = Client(
+            name=name, client_code=code, code_confirmed=True,
+            billing_address_line1=billing_address_line1,
+            billing_address_line2=billing_address_line2,
+            billing_city=billing_city,
+            billing_postcode=billing_postcode,
+            company_reg=company_reg,
+            vat_number=vat_number,
+            invoice_recipient_emails=invoice_recipient_emails,
+        )
         s.add(c)
         s.commit()
         try:
             log_audit_event("create", "billing", f"Client created: {name} ({code})",
-                            "client", c.id, {"name": name, "code": code})
+                            "client", c.id, {"name": name, "code": code,
+                                              "city": billing_city, "vat": vat_number})
         except Exception:
             pass
     flash(f"Client {name} created with code {code}.", "success")
@@ -5673,6 +5694,19 @@ def admin_clients_edit(client_id: int):
         c.name = name
         c.client_code = code
         c.code_confirmed = confirmed
+        # Billing defaults — only overwrite when the form submitted a
+        # non-empty value (lets the editor partially update without
+        # wiping unrelated fields).
+        for _field in (
+            "billing_address_line1", "billing_address_line2",
+            "billing_city", "billing_postcode",
+            "company_reg", "vat_number", "invoice_recipient_emails",
+        ):
+            _val = (request.form.get(_field) or "")
+            # presence check: form posted the field (even if empty) =>
+            # treat as explicit write
+            if _field in request.form:
+                setattr(c, _field, _val.strip())
         # Keep engagement.client (free-text mirror) in sync so existing
         # display code that reads engagement.client still works.
         s.execute(text("UPDATE engagements SET client = :n WHERE client_id = :cid")
@@ -9579,6 +9613,18 @@ class Client(Base):
     # /admin/clients before invoices can issue against engagements for this
     # client. Manually-created clients are confirmed at creation.
     code_confirmed = Column(Boolean, default=False)
+    # Default billing details owned by the client (the same data the
+    # Engagement Billing tile captures per-engagement). When a new
+    # Engagement is linked to a Client, these default to the
+    # Engagement's own billing fields so admins don't retype the same
+    # address for every project of the same client.
+    billing_address_line1 = Column(Text, default="")
+    billing_address_line2 = Column(Text, default="")
+    billing_city = Column(Text, default="")
+    billing_postcode = Column(Text, default="")
+    company_reg = Column(Text, default="")
+    vat_number = Column(Text, default="")
+    invoice_recipient_emails = Column(Text, default="")
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow,
                         onupdate=datetime.datetime.utcnow)
@@ -11768,6 +11814,24 @@ try:
                 _rc.execute(text(f"ALTER TABLE engagements ADD COLUMN {_coldef}"))
             except Exception:
                 # Column already exists — boot-time pattern, harmless.
+                pass
+
+        # --- clients billing-defaults columns (additive) ---
+        # Default billing details on the Client row, so adding a new
+        # client also captures the same fields the Engagement Billing
+        # tile collects. Mirrors engagements.<same> column shape.
+        for _coldef in (
+            "billing_address_line1 TEXT",
+            "billing_address_line2 TEXT",
+            "billing_city TEXT",
+            "billing_postcode TEXT",
+            "company_reg TEXT",
+            "vat_number TEXT",
+            "invoice_recipient_emails TEXT",
+        ):
+            try:
+                _rc.execute(text(f"ALTER TABLE clients ADD COLUMN {_coldef}"))
+            except Exception:
                 pass
 
         # --- associate_ts_permissions table (per-Associate OT/Expenses grants) ---

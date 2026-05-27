@@ -45,27 +45,67 @@
         <small class="text-muted">Code is 2-5 alphanumeric chars (e.g. LBG, BARC)</small>
     </div>
     <div class="card-body">
-        <form method="POST" action="{{ url_for('admin_clients_new') }}" class="row g-3">
+        <form method="POST" action="{{ url_for('admin_clients_new') }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             {% if next_url %}
             {# Passes the previous page URL through so the handler can
                redirect back after creating the client. #}
             <input type="hidden" name="next" value="{{ next_url }}">
             {% endif %}
-            <div class="col-md-7">
-                <label class="form-label">Client name</label>
-                <input type="text" name="name" class="form-control" required
-                       placeholder="e.g. Lloyds Banking Group">
+
+            <div class="row g-3">
+                <div class="col-md-9">
+                    <label class="form-label">Client name</label>
+                    <input type="text" name="name" class="form-control" required
+                           placeholder="e.g. Lloyds Banking Group">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Client code</label>
+                    <input type="text" name="client_code" class="form-control text-uppercase"
+                           required minlength="2" maxlength="5" pattern="[A-Za-z0-9]{2,5}"
+                           placeholder="LBG">
+                </div>
             </div>
-            <div class="col-md-3">
-                <label class="form-label">Client code</label>
-                <input type="text" name="client_code" class="form-control text-uppercase"
-                       required minlength="2" maxlength="5" pattern="[A-Za-z0-9]{2,5}"
-                       placeholder="LBG">
+
+            <h6 class="text-muted mt-4 mb-2">Billing address</h6>
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label">Address line 1</label>
+                    <input type="text" name="billing_address_line1" class="form-control">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Address line 2</label>
+                    <input type="text" name="billing_address_line2" class="form-control">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">City</label>
+                    <input type="text" name="billing_city" class="form-control">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Postcode</label>
+                    <input type="text" name="billing_postcode" class="form-control">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Company reg #</label>
+                    <input type="text" name="company_reg" class="form-control">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">VAT #</label>
+                    <input type="text" name="vat_number" class="form-control">
+                </div>
             </div>
-            <div class="col-md-2 d-flex align-items-end">
-                <button type="submit" class="btn btn-primary w-100">
-                    <i class="fas fa-plus me-1"></i> Add
+
+            <h6 class="text-muted mt-4 mb-2">Invoice recipients</h6>
+            <div class="mb-3">
+                <label class="form-label">Recipient email addresses</label>
+                <textarea name="invoice_recipient_emails" class="form-control" rows="2"
+                          placeholder="finance@client.com, accounts@client.com"></textarea>
+                <div class="form-text">Comma- or newline-separated. Used as the default To list when sending invoices for this client (can still be overridden per engagement).</div>
+            </div>
+
+            <div class="mt-3">
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-plus me-1"></i> Add client
                 </button>
             </div>
         </form>
