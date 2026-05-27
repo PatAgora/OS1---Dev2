@@ -4815,12 +4815,12 @@ def admin_void_invoice(invoice_id: int):
             pass
     flash(
         f"Invoice {invoice.invoice_number} voided." + (
-            " You can issue a replacement or notify the client from the invoice view."
+            " You can issue a replacement from the Ready-to-generate tiles or notify the client."
             if (old_status or "").lower() == "sent" else ""
         ),
         "success"
     )
-    return redirect(url_for("admin_view_invoice", invoice_id=invoice_id))
+    return redirect(url_for("admin_invoices"))
 
 
 @app.route("/admin/invoices/<int:invoice_id>/delete", methods=["POST"])
