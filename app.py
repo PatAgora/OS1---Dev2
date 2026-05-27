@@ -4665,10 +4665,23 @@ def _generate_invoice_pdf(invoice, line_items):
     # ----- HEADER BAR -----
     pdf.set_fill_color(*NAVY)
     pdf.rect(0, 0, 210, 22, style="F")
+    # Drop the Optimus logo on the navy header bar. The PNG already
+    # has a dark navy background that matches NAVY, so it blends in.
+    # Falls back to "OPTIMUS" text if the file is missing.
+    logo_path = os.path.join(app.root_path, "static", "images", "optimus-logo.png")
+    logo_drawn = False
+    try:
+        if os.path.exists(logo_path):
+            pdf.image(logo_path, x=12, y=6, h=10)
+            logo_drawn = True
+    except Exception:
+        current_app.logger.exception("Invoice PDF: failed to embed Optimus logo")
+    if not logo_drawn:
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_font("Helvetica", "B", 22)
+        pdf.set_xy(12, 6)
+        pdf.cell(80, 12, "OPTIMUS")
     pdf.set_text_color(255, 255, 255)
-    pdf.set_font("Helvetica", "B", 22)
-    pdf.set_xy(12, 6)
-    pdf.cell(80, 12, "OPTIMUS")
     pdf.set_font("Helvetica", "B", 18)
     pdf.set_xy(160, 6)
     pdf.cell(40, 12, "Invoice", align="R")
@@ -4945,10 +4958,20 @@ def _generate_invoice_pdf(invoice, line_items):
                     pdf.add_page()
                     pdf.set_fill_color(*NAVY)
                     pdf.rect(0, 0, 210, 22, style="F")
+                    # Page-2 header — same logo treatment.
+                    _logo2 = False
+                    try:
+                        if os.path.exists(logo_path):
+                            pdf.image(logo_path, x=12, y=6, h=10)
+                            _logo2 = True
+                    except Exception:
+                        pass
+                    if not _logo2:
+                        pdf.set_text_color(255, 255, 255)
+                        pdf.set_font("Helvetica", "B", 22)
+                        pdf.set_xy(12, 6)
+                        pdf.cell(120, 12, "OPTIMUS")
                     pdf.set_text_color(255, 255, 255)
-                    pdf.set_font("Helvetica", "B", 22)
-                    pdf.set_xy(12, 6)
-                    pdf.cell(120, 12, "OPTIMUS")
                     pdf.set_font("Helvetica", "B", 14)
                     pdf.set_xy(115, 7)
                     pdf.cell(83, 10, "BILLING DETAIL SCHEDULE", align="R")
