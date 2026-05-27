@@ -20563,6 +20563,28 @@ VERIFILE_CHECK_MAP = {
 # the associate portal personal-details page.
 VERIFILE_DBS_SCOTLAND_CHECK_ID = "UKCriminalRecordBasicScotland"
 
+# Req 26 — Verifile pre-configured "OS1 Standard" packages bundle DBS +
+# UK Credit + Online ID + Right-to-Work into one order so they can be
+# placed via Verifile's `"Package"` field instead of an explicit
+# CheckGroups list. Packages are candidate-entry only per Verifile's
+# API docs ("Packages currently can only be for candidate entry
+# orders"), so package-eligible checks are routed via the candidate-
+# entry endpoint regardless of how the rest of the order is placed.
+# Names are matched verbatim against Verifile's package catalogue; env
+# vars let us rename without a redeploy.
+VERIFILE_PACKAGE_EW = os.getenv("VERIFILE_PACKAGE_EW", "OS1 Standard - England and Wales")
+VERIFILE_PACKAGE_SC = os.getenv("VERIFILE_PACKAGE_SC", "OS1 Standard - Scotland")
+# OS1 check-type names that the OS1 Standard package bundles. The
+# Scotland variant of the DBS swap is handled inside the package by
+# Verifile — we pick the package name by region, but the OS1 check-
+# type label is the same ("DBS Check") either way.
+VERIFILE_PACKAGE_CHECK_TYPES = {
+    "DBS Check",
+    "Credit Check",
+    "Identity Verification",
+    "Right to Work",
+}
+
 
 def _verifile_resolve_check_id(check_type: str, in_scotland: bool) -> str:
     """Map an OS1 vetting check type to its Verifile CheckTypeId, selecting
@@ -20940,6 +20962,76 @@ def verifile_place_order(name: str, email: str, candidate_id: int, check_types: 
     data = resp.json()
     order_id = str(data.get("Id") or data.get("id") or "")
     print(f"[Verifile] Candidate-entry order placed: {order_id} for candidate {candidate_id} with {len(check_groups)} checks")
+    return order_id
+
+
+def verifile_place_candidate_entry_package_order(
+    name: str, email: str, candidate_id: int, package_name: str
+) -> str:
+    """Req 26 — place a candidate-entry order using a Verifile pre-configured
+    package (e.g. "OS1 Standard - England and Wales"). Replaces the
+    explicit CheckGroups array with the `"Package"` field. The candidate
+    completes the rest of the data via Verifile's web portal.
+
+    Returns the Verifile order ID.
+    """
+    headers = _verifile_headers()
+    parts = (name or "").strip().split(None, 1)
+    first_name = parts[0] if parts else "Unknown"
+    last_name = parts[1] if len(parts) > 1 else ""
+
+    # Pull DOB / canonical name from the associate profile when available
+    # — same fields the non-package candidate-entry path uses.
+    dob_str = None
+    try:
+        from associate_portal import _portal_model
+        AP = _portal_model("AssociateProfile")
+        if AP:
+            with Session(engine) as ps:
+                prof = ps.scalar(select(AP).where(AP.candidate_id == candidate_id))
+                if prof and getattr(prof, "dob", None):
+                    dob_str = prof.dob.strftime("%Y-%m-%d")
+                if prof and getattr(prof, "first_name", ""):
+                    first_name = prof.first_name
+                if prof and getattr(prof, "surname", ""):
+                    last_name = prof.surname
+    except Exception:
+        pass
+
+    import uuid as _uuid, json as _json
+    payload = {
+        "UniqueKey": str(_uuid.uuid4()),
+        "Package": package_name,
+        "Candidate": {
+            "CurrentName": {
+                "FirstName": first_name,
+                "LastName": last_name,
+            },
+            "PersonalInfo": {
+                "ApplicantType": "Candidate",
+                "CandidateEmail": email,
+            },
+        },
+    }
+    if dob_str:
+        payload["Candidate"]["PersonalInfo"]["DateOfBirth"] = dob_str
+
+    print(f"[Verifile] Placing candidate-entry PACKAGE order ({package_name!r}): "
+          f"{_json.dumps(payload, indent=2)}")
+
+    resp = _requests_lib.post(
+        f"{VERIFILE_BASE_URL}/orders/candidateentry",
+        json=payload,
+        headers=headers,
+        timeout=30,
+    )
+    if resp.status_code >= 400:
+        print(f"[Verifile] Package order failed ({resp.status_code}): {resp.text}")
+    resp.raise_for_status()
+    data = resp.json()
+    order_id = str(data.get("Id") or data.get("id") or "")
+    print(f"[Verifile] Package order placed: {order_id} for candidate {candidate_id} "
+          f"using package {package_name!r}")
     return order_id
 
 
@@ -21378,6 +21470,68 @@ def verifile_submit_all_checks(candidate_id: int, cand_name: str, cand_email: st
         # Data incomplete — move all to candidate-entry
         candidate_entry_list.extend(client_entry_list)
         client_entry_list = []
+
+    # --- Package order for the OS1 Standard bundle (Req 26) ---
+    # If any of (DBS / Credit / Identity / Right to Work) are being
+    # submitted AND we know the region, peel them off into ONE
+    # candidate-entry order using Verifile's `"Package"` field
+    # (England-and-Wales vs Scotland chosen by the associate's
+    # "current address in Scotland" flag captured during onboarding).
+    # The remaining checks (References, Qualifications, Sanctions,
+    # Directorship, Social Media, etc) still flow through the existing
+    # CheckGroups candidate-entry order below.
+    package_eligible = [ct for ct in candidate_entry_list if ct in VERIFILE_PACKAGE_CHECK_TYPES]
+    if package_eligible:
+        # Resolve region. If we can't determine it confidently, skip
+        # the package and let the standard CheckGroups path handle
+        # every check individually — same behaviour as today, just
+        # not benefiting from the package.
+        in_scotland = False
+        region_known = False
+        try:
+            from associate_portal import _portal_model
+            AP = _portal_model("AssociateProfile")
+            if AP:
+                with Session(engine) as ps:
+                    prof = ps.scalar(select(AP).where(AP.candidate_id == candidate_id))
+                    if prof is not None and getattr(prof, "current_address_in_scotland", None) is not None:
+                        in_scotland = bool(prof.current_address_in_scotland)
+                        region_known = True
+        except Exception:
+            region_known = False
+        if region_known:
+            package_name = VERIFILE_PACKAGE_SC if in_scotland else VERIFILE_PACKAGE_EW
+            try:
+                pkg_order_id = verifile_place_candidate_entry_package_order(
+                    cand_name, cand_email, candidate_id, package_name
+                )
+                print(f"[Verifile] Package order placed: {pkg_order_id} "
+                      f"(covers {len(package_eligible)} OS1 checks: {package_eligible})")
+                for check_type in package_eligible:
+                    vc = session.scalar(
+                        select(VettingCheck)
+                        .where(VettingCheck.candidate_id == candidate_id)
+                        .where(VettingCheck.check_type == check_type)
+                    )
+                    if vc:
+                        vc.external_ref = pkg_order_id
+                        vc.external_provider = "verifile"
+                        vc.status = "In Progress"
+                        submitted += 1
+                # Drop package-covered checks from the residual list so
+                # they aren't double-submitted via CheckGroups below.
+                candidate_entry_list = [
+                    ct for ct in candidate_entry_list if ct not in VERIFILE_PACKAGE_CHECK_TYPES
+                ]
+            except Exception as e:
+                current_app.logger.warning(
+                    f"Verifile: package order failed for candidate #{candidate_id} "
+                    f"({package_name!r}): {e}. Falling back to per-check CheckGroups for "
+                    f"these checks."
+                )
+        else:
+            print(f"[Verifile] Region unknown for candidate {candidate_id} — "
+                  f"skipping OS1 Standard package, all checks via CheckGroups.")
 
     # --- Candidate-entry order for remaining checks ---
     if candidate_entry_list:
