@@ -3970,7 +3970,7 @@ def admin_auto_generate_invoice(engagement_id: int, year: int, month: int):
                 f"Open or void it before generating another.",
                 "warning",
             )
-            return redirect(url_for("admin_view_invoice", invoice_id=existing.id))
+            return redirect(url_for("admin_invoices"))
         outstanding = _check_timesheets_ready(s, engagement_id, year, month)
         if outstanding:
             names = ", ".join(f"TS-{r['id']:04d} ({r['status']})" for r in outstanding[:5])
@@ -4136,7 +4136,7 @@ def admin_create_invoice():
                         f"Open or void it before creating another.",
                         "warning",
                     )
-                    return redirect(url_for("admin_view_invoice", invoice_id=_dup.id))
+                    return redirect(url_for("admin_invoices"))
             try:
                 invoice_number = _next_invoice_number(s, engagement)
             except ValueError as exc:
