@@ -634,6 +634,9 @@
       <a href="{{ url_for('opportunities_') }}" class="btn btn-light btn-sm">
         <i class="fas fa-list me-1"></i> All Opportunities
       </a>
+      <a href="{{ url_for('opportunities_') }}#create-opportunity" class="btn btn-success btn-sm">
+        <i class="fas fa-plus-circle me-1"></i> Create New Opportunity
+      </a>
       {% else %}
       <a href="{{ url_for('pipeline') }}" class="btn btn-light btn-sm">
         <i class="fas fa-funnel-dollar me-1"></i> Pipeline
