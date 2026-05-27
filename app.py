@@ -3254,12 +3254,13 @@ def admin_invoices():
                     ]
                 # Rejected timesheets are treated as "decided, won't be
                 # billed" — they don't block. Ready (Generate enabled)
-                # requires every existing timesheet to be Approved or
-                # Rejected — i.e. no Draft / Submitted / Pending rows
-                # blocking. The expected denominator is just for visibility;
-                # it doesn't gate Generate (people sometimes don't submit).
+                # requires the FULL expected coverage to be decided:
+                # every expected timesheet must be Approved or Rejected.
+                # 10/40 approved is NOT ready, even with zero Draft/Submitted
+                # rows, because 30 of the expected timesheets are simply
+                # missing — billing would under-charge.
                 blocking = total - approved - rejected
-                ready = blocking <= 0
+                ready = (approved + rejected) >= expected and blocking <= 0
                 autogen_tiles.append({
                     "engagement_id": eng.id,
                     "engagement_ref": getattr(eng, "ref", "") or "",

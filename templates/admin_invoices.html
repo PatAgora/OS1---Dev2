@@ -359,7 +359,11 @@
                 onsubmit="return confirm('Auto-generate invoice for ENG-{{ tile.engagement_id }} ({{ tile.engagement_ref or tile.engagement_name }}) — {{ tile.client_name }} / {{ tile.engagement_name }} for {{ '%04d-%02d' % (tile.year, tile.month) }}?\n\nThis creates ONE invoice for THIS engagement only. Other engagements for the same client are billed separately.');"
                 {% endif %}>
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="btn btn-sm btn-primary" {% if not tile.ready %}disabled title="Some timesheets are still Draft or Submitted — approve or reject them first"{% endif %}>
+            {% set decided = tile.approved + tile.rejected %}
+            <button class="btn btn-sm btn-primary"
+                    {% if not tile.ready %}disabled
+                    title="Cannot generate — {{ decided }} of {{ tile.expected }} expected timesheets decided. {{ tile.expected - decided }} still outstanding (Draft / Submitted / not yet submitted). Approve or reject every expected timesheet before generating."
+                    {% endif %}>
               <i class="fas fa-bolt me-1"></i>Generate
             </button>
           </form>
