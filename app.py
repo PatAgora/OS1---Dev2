@@ -3445,8 +3445,65 @@ def _generate_invoice_payload(s, engagement_id: int, year: int, month: int) -> d
         ).bindparams(ids=cand_tuple)).all():
             names[cid] = nm
 
-    # Day rate lookup from EngagementPlan if billable.day_rate is 0.
-    # (We use the value already on the timesheet row when present.)
+    # ---- Charge-out rate lookup (NOT the pay rate) ----
+    # Invoices must bill the client at the CHARGE rate stored on the
+    # matching EngagementPlan, not the pay_rate the Associate gets paid.
+    # Lookup chain per Associate on this engagement:
+    #   Application (matching candidate + engagement, Placed-style)
+    #     -> Job.role_type
+    #     -> EngagementPlan (engagement_id + role_type), latest version
+    #     -> .charge_rate
+    # Falls back to ts.day_rate when no plan / charge_rate is set, so
+    # legacy engagements without an EngagementPlan still invoice at
+    # whatever the timesheet captured. Result is a dict keyed by
+    # candidate id; one resolved rate per Associate per invoice run.
+    charge_rate_by_cand = {}
+    if cand_ids:
+        # Two-step Python resolve for cross-dialect safety (Postgres
+        # DISTINCT ON isn't available on SQLite): first the role each
+        # Associate works under on this engagement, then the latest
+        # EngagementPlan.charge_rate for that role.
+        cand_role = {}
+        try:
+            role_rows = s.execute(text(
+                "SELECT a.candidate_id, j.role_type, a.created_at "
+                "FROM applications a "
+                "JOIN jobs j ON j.id = a.job_id "
+                "WHERE a.candidate_id IN :ids "
+                "  AND j.engagement_id = :eid "
+                "  AND a.status IN ('Placed','Contract Signed','On Assignment','Active','Contracted','Hired') "
+                "ORDER BY a.candidate_id, a.created_at DESC"
+            ).bindparams(ids=cand_tuple, eid=engagement_id)).all()
+            for rr in role_rows:
+                if rr.candidate_id not in cand_role and rr.role_type:
+                    cand_role[rr.candidate_id] = rr.role_type
+        except Exception:
+            cand_role = {}
+        # One plan lookup per distinct role on this engagement.
+        plan_cache = {}
+        for cand_id_x, role in cand_role.items():
+            if role not in plan_cache:
+                try:
+                    p = s.execute(text(
+                        "SELECT charge_rate FROM engagement_plans "
+                        "WHERE engagement_id = :eid AND role_type = :rt "
+                        "ORDER BY version_int DESC LIMIT 1"
+                    ).bindparams(eid=engagement_id, rt=role)).first()
+                    plan_cache[role] = float(p.charge_rate) if (p and p.charge_rate) else None
+                except Exception:
+                    plan_cache[role] = None
+            cr = plan_cache.get(role)
+            if cr:
+                charge_rate_by_cand[cand_id_x] = cr
+
+    def _resolve_invoice_rate(ts_row):
+        """Per-row charge-out rate. Prefer the EngagementPlan
+        charge_rate via the Associate's role; fall back to the
+        timesheet's stored day_rate when no plan/charge_rate exists."""
+        cr = charge_rate_by_cand.get(ts_row.user_id)
+        if cr is not None and cr > 0:
+            return cr
+        return ts_row.day_rate or 0
 
     # Build per-role line items + per-Associate-per-week schedule rows.
     # Adjustment timesheets (Phase 4 / TS 21) are surfaced as separate
@@ -3456,7 +3513,7 @@ def _generate_invoice_payload(s, engagement_id: int, year: int, month: int) -> d
     adjustment_lines = []   # list of dicts ready to become line_items
     schedule_days = []
     for r in ts_rows:
-        rate = r.day_rate or 0
+        rate = _resolve_invoice_rate(r)
         days = r.billable_days or 0
         associate_name = names.get(r.user_id, "(unknown)")
         is_adjustment = (r.ts_type or "Standard") == "Adjustment"
