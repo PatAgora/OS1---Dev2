@@ -23049,11 +23049,17 @@ def api_vetting_trigger(cand_id):
         if not cand:
             return jsonify({"ok": False, "error": "Associate not found"}), 404
 
-        # Find the candidate's active application to get engagement context
+        # Find the candidate's latest application to get engagement context.
+        # No status filter: the candidate-profile view and the legacy
+        # start_vetting trigger both resolve engagement/job by latest
+        # application irrespective of status. Filtering by ("Accepted",
+        # "Offer Accepted") only meant Placed / Contract Signed /
+        # Interview Passed candidates fell back to DEFAULT_VETTING_CHECKS
+        # — sending every Verifile-mapped check (6) even when the
+        # engagement only required 3.
         appn = s.scalar(
             select(Application)
             .where(Application.candidate_id == cand_id)
-            .where(Application.status.in_(["Accepted", "Offer Accepted"]))
             .order_by(Application.created_at.desc())
         )
 
