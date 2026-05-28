@@ -27634,6 +27634,11 @@ def send_reference(cand_id: int):
     side of the employment was approached. Defaults to 'company' when
     not supplied to keep the legacy callers working."""
     ref_id = request.form.get("ref_id", type=int)
+    # emp_id links the row back to the EmploymentHistory entry so the
+    # candidate-profile assembler can render the CONFIRM + UPLOAD widget
+    # on the right row. Without this the row is created orphaned and the
+    # upload column stays blank after a successful send.
+    emp_id = request.form.get("emp_id", type=int)
     referee_email = request.form.get("referee_email", "").strip()
     company_name = request.form.get("company_name", "").strip()
     # Req 22 — agency / company / manual. Defaults to 'company' for any
@@ -27660,10 +27665,15 @@ def send_reference(cand_id: int):
             ref_req = ReferenceRequest(
                 candidate_id=cand_id,
                 company_name=company_name,
-                referee_email=referee_email
+                referee_email=referee_email,
+                employment_history_id=emp_id,
             )
             s.add(ref_req)
             s.flush()
+        elif emp_id and not ref_req.employment_history_id:
+            # Backfill the FK on legacy rows that were sent before this
+            # fix so the upload column shows up on the next render.
+            ref_req.employment_history_id = emp_id
 
         # Update referee email if the user changed it in the modal
         if referee_email and ref_req.referee_email != referee_email:

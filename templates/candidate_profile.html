@@ -1805,6 +1805,10 @@
             <form method="POST" id="refEmailSendForm" action="" enctype="multipart/form-data">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="ref_id" id="refEmailRefId" value="">
+              {# emp_id is what links the new ReferenceRequest row back to the
+                 employment entry — without it, the candidate-profile assembler
+                 can't find the row when rendering the CONFIRM + UPLOAD column. #}
+              <input type="hidden" name="emp_id" id="refEmailEmpId" value="">
               <input type="hidden" name="company_name" id="refEmailCompanyName" value="">
               <input type="hidden" name="referee_email" id="refEmailRefereeEmail" value="">
               {# Req 22 — records which side the send was for (agency / company / manual). #}
@@ -3242,6 +3246,7 @@ function openSendReference(candidateId, refId, empId, recipientType, prefilledEm
     // send_reference endpoint still creates the row from the form fields
     // on submit (ref_id stays empty).
     document.getElementById('refEmailRefId').value = '';
+    document.getElementById('refEmailEmpId').value = empId ? String(empId) : '';
     document.getElementById('refEmailRefereeEmail').value = prefilledEmail || '';
     document.getElementById('refEmailToDisplay').value = prefilledEmail || '';
     document.getElementById('refEmailRecipientType').value = _refSendState.recipientType;
@@ -3365,6 +3370,11 @@ function previewReferenceEmail(candidateId, refId) {
     }
     // Populate the modal fields
     document.getElementById('refEmailRefId').value = refId;
+    // Backfill emp_id too, in case the existing row was created without
+    // employment_history_id (e.g. orphaned by an earlier send). Server
+    // will set it on the row when present.
+    var empIdForExisting = (_refSendState && _refSendState.empId) || '';
+    document.getElementById('refEmailEmpId').value = empIdForExisting ? String(empIdForExisting) : '';
     document.getElementById('refEmailCompanyName').value = data.company_name || '';
     // Req 22 — when the caller pre-set a recipient (via openSendReference),
     // override the To field with that. Otherwise fall back to whatever the
