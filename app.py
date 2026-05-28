@@ -21366,6 +21366,67 @@ def verifile_poll_order(order_id: str) -> dict:
     }
 
 
+def verifile_fetch_final_report(order_id: str, layout: str = "Activity") -> bytes:
+    """Req 28 — fetch the Verifile final-report PDF for a completed order.
+
+    GET /orders/{orderId}/report?layout=Activity returns
+    Content-Type: application/pdf per Verifile's API docs. `layout` is
+    one of "CV" or "Activity"; Activity is the chronological format
+    which matches the rest of the report bundle stored on the profile.
+
+    Returns the raw PDF bytes. Caller is responsible for persisting +
+    catching exceptions; we deliberately let `raise_for_status` bubble
+    so the webhook handler can log + skip without crashing the
+    transaction."""
+    headers = _verifile_headers()
+    resp = _requests_lib.get(
+        f"{VERIFILE_BASE_URL}/orders/{order_id}/report",
+        params={"layout": layout},
+        headers=headers,
+        timeout=60,
+    )
+    resp.raise_for_status()
+    return resp.content
+
+
+def _persist_verifile_final_report(s, candidate_id: int, order_id: str,
+                                   pdf_bytes: bytes) -> "Document | None":
+    """Save a Verifile final-report PDF to UPLOAD_FOLDER and link a
+    Document row to the candidate. Idempotent — if a Document already
+    exists for the same (candidate, order_id) pair, returns it without
+    re-fetching. Returns the Document row (or None on failure)."""
+    if not pdf_bytes:
+        return None
+    safe_order = re.sub(r"[^A-Za-z0-9_-]+", "-", str(order_id)) or "unknown"
+    original_name = f"Verifile-Order-{safe_order}.pdf"
+    # Idempotency: re-use any existing row.
+    existing = s.scalar(
+        select(Document)
+        .where(Document.candidate_id == candidate_id)
+        .where(Document.doc_type == "verifile_final_report")
+        .where(Document.original_name == original_name)
+    )
+    if existing is not None:
+        return existing
+    disk_name = f"{uuid.uuid4().hex[:12]}-{original_name}"
+    try:
+        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+        with open(os.path.join(UPLOAD_FOLDER, disk_name), "wb") as f:
+            f.write(pdf_bytes)
+    except Exception:
+        current_app.logger.exception("Verifile final report: disk write failed")
+        return None
+    doc = Document(
+        candidate_id=candidate_id,
+        doc_type="verifile_final_report",
+        filename=disk_name,
+        original_name=original_name,
+    )
+    s.add(doc)
+    s.flush()
+    return doc
+
+
 def verifile_submit_all_checks(candidate_id: int, cand_name: str, cand_email: str,
                                 checks_to_submit: list, session) -> int:
     """Submit vetting checks to Verifile using a hybrid client-entry / candidate-entry approach.
@@ -21653,6 +21714,24 @@ def webhook_verifile():
             vc.completed_at = datetime.datetime.utcnow()
 
         cand_id = vc.candidate_id
+
+        # Req 28 — once a check on this order has completed, fetch the
+        # final-report PDF for the parent order and persist it against
+        # the candidate. Idempotent at the Document level
+        # (_persist_verifile_final_report reuses existing rows), so it's
+        # safe to call on every Complete event — only the first one for
+        # a given order actually hits the API. Errors are logged but
+        # never fail the webhook.
+        if new_status == "Complete" and vc.external_ref:
+            try:
+                pdf_bytes = verifile_fetch_final_report(vc.external_ref)
+                if pdf_bytes:
+                    _persist_verifile_final_report(s, cand_id, vc.external_ref, pdf_bytes)
+            except Exception:
+                current_app.logger.exception(
+                    "Verifile final report fetch failed for candidate %s order %s",
+                    cand_id, vc.external_ref,
+                )
 
         # Audit log
         log_audit_event(
@@ -26337,10 +26416,33 @@ def candidate_profile(cand_id: int):
         current_app.logger.exception("address_history tile: build failed")
         address_history_rows, address_history_total_years, address_history_meets_5y = [], 0.0, False
 
+    # Req 28 — Verifile final-report PDFs stored against this candidate.
+    # Surfaced under the Vetting Checks tile.
+    verifile_final_reports = []
+    try:
+        with Session(engine) as _s_vfr:
+            verifile_final_reports = [
+                {
+                    "id": d.id,
+                    "original_name": getattr(d, "original_name", "") or getattr(d, "filename", ""),
+                    "uploaded_at": getattr(d, "uploaded_at", None),
+                }
+                for d in _s_vfr.scalars(
+                    select(Document)
+                    .where(Document.candidate_id == cand_id)
+                    .where(Document.doc_type == "verifile_final_report")
+                    .order_by(Document.uploaded_at.desc())
+                ).all()
+            ]
+    except Exception:
+        current_app.logger.exception("verifile_final_reports lookup failed")
+        verifile_final_reports = []
+
     return render_template(
         "candidate_profile.html",
         appn=latest_app,            # can be None
         latest_app=latest_app,
+        verifile_final_reports=verifile_final_reports,
         interview_app=interview_app,
         interview_history=interview_history,
         cand=cand,
