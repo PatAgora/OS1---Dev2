@@ -294,6 +294,14 @@ def _ensure_models():
         permission_delay_reason = Column(Text, default="")
         permission_future_date = Column(Date, nullable=True)
         reference_status = Column(String(30), default="not_sent")  # not_sent/sent/received/flagged
+        # Req 32 — locked-on-placement. Set when the candidate's
+        # application moves to Placed. Locked rows are read-only on the
+        # portal; the associate can still ADD new rows but can't amend
+        # historical ones (audit requirement). locked_by_application_id
+        # preserves the audit trail of which placement caused the lock.
+        locked = Column(Boolean, default=False)
+        locked_at = Column(DateTime, nullable=True)
+        locked_by_application_id = Column(Integer, nullable=True)
         created_at = Column(DateTime, default=datetime.utcnow)
         updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -3056,6 +3064,16 @@ def references_gap_evidence_replace(entry_id: int):
         if not entry:
             flash("Gap entry not found.", "danger")
             return redirect(url_for("associate.references_employment"))
+        # Req 32 — locked entries are audit-frozen; the evidence can't be
+        # swapped after placement.
+        if getattr(entry, "locked", False):
+            flash(
+                "This gap entry is locked because it was part of a previous "
+                "placement. Add a new entry if you need to record additional "
+                "evidence.",
+                "warning",
+            )
+            return redirect(url_for("associate.references_employment"))
         if not getattr(entry, "is_gap", False):
             flash("Evidence can only be attached to gap entries.", "warning")
             return redirect(url_for("associate.references_employment"))
@@ -3112,6 +3130,14 @@ def references_gap_evidence_remove(entry_id: int):
         entry = s.query(EmploymentHistory).filter_by(id=entry_id, candidate_id=cand_id).first()
         if not entry:
             flash("Gap entry not found.", "danger")
+            return redirect(url_for("associate.references_employment"))
+        # Req 32 — locked entries are audit-frozen.
+        if getattr(entry, "locked", False):
+            flash(
+                "This gap entry is locked because it was part of a previous "
+                "placement and its evidence cannot be removed.",
+                "warning",
+            )
             return redirect(url_for("associate.references_employment"))
         if not getattr(entry, "is_gap", False):
             flash("Evidence can only be attached to gap entries.", "warning")
@@ -3642,6 +3668,15 @@ def references_delete_entry(entry_id):
         entry = s.query(EmploymentHistory).filter_by(id=entry_id, candidate_id=cand_id).first()
         if not entry:
             return jsonify({"success": False, "error": "Entry not found"}), 404
+        # Req 32 — locked entries are audit-frozen. Refuse the delete.
+        if getattr(entry, "locked", False):
+            return jsonify({
+                "success": False,
+                "error": (
+                    "This employment entry is locked because it was part of a "
+                    "previous placement. Add a new entry for any updates."
+                ),
+            }), 403
         desc = entry.company_name or "Gap"
         s.delete(entry)
         _add_note(s, cand_id, f"Employment entry deleted: {desc}.")
@@ -5580,6 +5615,17 @@ def references_edit_entry(entry_id):
         entry = s.query(EmploymentHistory).filter_by(id=entry_id, candidate_id=cand_id).first()
         if not entry:
             flash("Entry not found.", "danger")
+            return redirect(url_for("associate.references"))
+
+        # Req 32 — locked entries are audit-frozen. Refuse edits with a
+        # friendly explanation; the associate can still add a new entry.
+        if getattr(entry, "locked", False):
+            flash(
+                "This employment entry is locked because it was part of a "
+                "previous placement and cannot be edited. Add a new entry "
+                "for any updates.",
+                "warning",
+            )
             return redirect(url_for("associate.references"))
 
         if entry.is_gap:

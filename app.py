@@ -3516,6 +3516,48 @@ def _vat_band_label(treatment: str) -> str:
     }.get(treatment, f"Expenses ({treatment})")
 
 
+def _lock_history_on_placement(session, candidate_id, application_id):
+    """Req 32 — when an application transitions to Placed, freeze all
+    current EmploymentHistory + ReferenceRequest rows for that candidate
+    so the data the placement was based on can never be retrospectively
+    amended (audit requirement). New rows added post-placement remain
+    editable until the next placement locks them too.
+
+    Idempotent — already-locked rows are left untouched.
+    """
+    if not (candidate_id and application_id):
+        return 0
+    now = datetime.datetime.utcnow()
+    locked_count = 0
+    try:
+        session.execute(text("""
+            UPDATE employment_history
+            SET locked = TRUE,
+                locked_at = :now,
+                locked_by_application_id = :app_id
+            WHERE candidate_id = :cid
+              AND (locked = FALSE OR locked IS NULL)
+        """), {"now": now, "app_id": application_id, "cid": candidate_id})
+    except Exception:
+        current_app.logger.exception(
+            "placement-lock: employment_history lock failed for cand %s", candidate_id
+        )
+    try:
+        session.execute(text("""
+            UPDATE reference_requests
+            SET locked = TRUE,
+                locked_at = :now,
+                locked_by_application_id = :app_id
+            WHERE candidate_id = :cid
+              AND (locked = FALSE OR locked IS NULL)
+        """), {"now": now, "app_id": application_id, "cid": candidate_id})
+    except Exception:
+        current_app.logger.exception(
+            "placement-lock: reference_requests lock failed for cand %s", candidate_id
+        )
+    return locked_count
+
+
 def _current_engagement_id(session, candidate_id):
     """Req 32 — return the engagement_id from the candidate's latest
     application that has an engagement-linked job. Used to scope
@@ -11587,6 +11629,13 @@ class ReferenceRequest(Base):
     # uploaded Document with the response email (PDF / EML).
     agreed_at = Column(DateTime, nullable=True)
     reply_doc_id = Column(Integer, ForeignKey("documents.id"), nullable=True)
+    # Req 32 — locked-on-placement. Frozen once the candidate's
+    # application transitions to Placed so historical references can't
+    # be amended (audit). locked_by_application_id records which
+    # placement caused the lock.
+    locked = Column(Boolean, default=False)
+    locked_at = Column(DateTime, nullable=True)
+    locked_by_application_id = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
@@ -12744,6 +12793,13 @@ try:
             # Req 32 — engagement-scoped fresh start on re-application.
             "ALTER TABLE vetting_check ADD COLUMN engagement_id INTEGER REFERENCES engagements(id)",
             "ALTER TABLE reference_requests ADD COLUMN engagement_id INTEGER REFERENCES engagements(id)",
+            # Req 32 — lock-on-placement for employment history + references.
+            "ALTER TABLE employment_history ADD COLUMN locked BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE employment_history ADD COLUMN locked_at TIMESTAMP",
+            "ALTER TABLE employment_history ADD COLUMN locked_by_application_id INTEGER",
+            "ALTER TABLE reference_requests ADD COLUMN locked BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE reference_requests ADD COLUMN locked_at TIMESTAMP",
+            "ALTER TABLE reference_requests ADD COLUMN locked_by_application_id INTEGER",
             "ALTER TABLE esign_requests ADD COLUMN candidate_id INTEGER REFERENCES candidates(id)",
             "ALTER TABLE esign_requests ADD COLUMN engagement_id INTEGER REFERENCES engagements(id)",
             "ALTER TABLE esign_requests ADD COLUMN signing_url VARCHAR(500)",
@@ -17969,7 +18025,12 @@ def api_workflow_move():
                     cand.status = "Interviewing"
                 elif new_status in ["Rejected", "Withdrawn"]:
                     cand.status = "Available"
-            
+            # Req 32 — lock EmploymentHistory + ReferenceRequest when
+            # the kanban move lands on Placed (matches the placement
+            # event triggered via signed-contract finalisation too).
+            if new_status == "Placed" and cand and app_obj:
+                _lock_history_on_placement(s, cand.id, app_obj.id)
+
             # Store values for audit log before commit
             audit_cand_id = cand.id if cand else None
             audit_cand_name = cand.name if cand else None
@@ -18222,11 +18283,16 @@ def workflow_move():
                 cand.status = "On Assignment"
                 cand.applications_blocked = True
                 candidate_status_updated = True
-                
+
+                # Req 32 — placement triggers EmploymentHistory +
+                # ReferenceRequest lock. Idempotent.
+                if new_status == "Placed":
+                    _lock_history_on_placement(s, cand.id, appn.id)
+
                 # Update interview result if not already set
                 if not cand.optimus_interview_result or cand.optimus_interview_result == "Pending":
                     cand.optimus_interview_result = "Pass"
-                
+
                 # Mark as previously vetted since they completed the workflow
                 cand.previously_vetted = True
                 
@@ -24380,6 +24446,10 @@ def _apply_contract_signed(s, cand, *, source: str = "manual"):
     )
     if latest_app:
         latest_app.status = "Placed"
+        # Req 32 — placement triggers the lock on EmploymentHistory +
+        # ReferenceRequest so what was true at placement can't be
+        # retroactively edited.
+        _lock_history_on_placement(s, cand_id, latest_app.id)
         if not esig.application_id:
             esig.application_id = latest_app.id
         if latest_app.job_id and not esig.engagement_id:
@@ -26522,7 +26592,6 @@ def candidate_profile(cand_id: int):
                 for rr in s.scalars(
                     select(ReferenceRequest)
                     .where(ReferenceRequest.candidate_id == cand_id)
-                    .where(ReferenceRequest.engagement_id == current_eng_id)
                     .order_by(ReferenceRequest.created_at.desc())
                 ).all()
             ]
@@ -26546,12 +26615,19 @@ def candidate_profile(cand_id: int):
                 ).all()
 
                 ref_by_emp_id = {}
+                # Req 32 update — references persist per-candidate. They
+                # carry across engagements (a reference collected during
+                # engagement A is still valid for engagement B), so the
+                # live timeline shows every ReferenceRequest the
+                # candidate has, not just the current engagement's.
+                # When two rows exist for the same employment, the most
+                # recently created wins via the desc() ordering.
                 for rr in s.scalars(
                     select(ReferenceRequest)
                     .where(ReferenceRequest.candidate_id == cand_id)
-                    .where(ReferenceRequest.engagement_id == current_eng_id)
+                    .order_by(ReferenceRequest.created_at.desc())
                 ).all():
-                    if rr.employment_history_id:
+                    if rr.employment_history_id and rr.employment_history_id not in ref_by_emp_id:
                         ref_by_emp_id[rr.employment_history_id] = rr
 
                 def _fmt_d(d):
