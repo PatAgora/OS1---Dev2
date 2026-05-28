@@ -2952,11 +2952,41 @@ def references_employment():
                                     "filename": getattr(d, "filename", ""),
                                 }
 
+    # Surface the 5-year coverage check on the form page itself so the
+    # associate is told upfront if their timeline doesn't reach back
+    # five years yet. Uses the same logic as the downstream vetting
+    # gate (`_check_employment_complete`) for consistency.
+    coverage_ok = True
+    coverage_msg = ""
+    years_covered = 0.0
+    with SASession(engine) as s_cov:
+        try:
+            coverage_ok, coverage_msg = _check_employment_complete(s_cov, cand_id)
+        except Exception:
+            coverage_ok, coverage_msg = True, ""
+        try:
+            if EmploymentHistory:
+                dated = [
+                    e for e in s_cov.query(EmploymentHistory)
+                    .filter_by(candidate_id=cand_id).all()
+                    if e.start_date
+                ]
+                if dated:
+                    earliest = min(e.start_date for e in dated)
+                    years_covered = round(
+                        (datetime.utcnow().date() - earliest).days / 365.25, 1
+                    )
+        except Exception:
+            years_covered = 0.0
+
     return render_template(
         "associate/references_employment.html",
         employment_entries=entries,
         gaps_detected=gaps,
         gap_evidence=gap_evidence,
+        coverage_ok=coverage_ok,
+        coverage_msg=coverage_msg,
+        years_covered=years_covered,
     )
 
 

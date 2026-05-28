@@ -11,6 +11,27 @@
 {% endblock %}
 
 {% block content %}
+{# 5-year coverage banner — soft block to make sure the associate
+   adds enough entries before progressing to the Sign Declaration
+   step. Mirrors `_check_employment_complete` server-side. #}
+{% if employment_entries and not coverage_ok %}
+<div class="alert alert-warning d-flex align-items-start gap-2 mb-4" role="alert">
+    <i class="fas fa-exclamation-triangle mt-1"></i>
+    <div>
+        <strong>Your employment history doesn't yet cover the full 5 years.</strong>
+        {% if years_covered %}
+            Currently {{ '%g'|format(years_covered) }} year{{ 's' if years_covered != 1 else '' }} covered.
+        {% endif %}
+        <div class="small mt-1">
+            {{ coverage_msg or "Add an earlier employment or gap entry below until the timeline reaches back five years from today." }}
+        </div>
+        <div class="small text-muted mt-1">
+            Until then the <em>Sign Employment Reference Declaration</em> button at the bottom of this page is disabled.
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <!-- Instructions -->
 <div class="portal-card mb-4">
     <div class="portal-card-header">
@@ -219,10 +240,10 @@
 }
 </script>
 
-<!-- Add Employment Entry -->
+<!-- Employment Entry — single form used to save / edit one period of work -->
 <div class="portal-card mb-4">
     <div class="portal-card-header">
-        <h3><i class="fas fa-plus-circle me-2"></i>Save Employment Entry</h3>
+        <h3><i class="fas fa-briefcase me-2"></i>Save Employment Entry</h3>
     </div>
     <div class="portal-card-body">
         <form method="POST" action="/portal/references/add-employment" id="addEmploymentForm">
@@ -312,7 +333,7 @@
     </div>
 </div>
 
-<!-- Add Gap Entry -->
+<!-- Gap Entry — single form used to save / edit one employment gap -->
 <div class="portal-card mb-4">
     <div class="portal-card-header">
         <h3><i class="fas fa-pause-circle me-2"></i>Save Gap Entry</h3>
@@ -386,9 +407,25 @@
     <div class="portal-card-body">
         <p class="mb-2">Once your employment timeline is complete and you've set the Yes/No reference-contact preference on each entry above, sign the Employment Reference Declaration to authorise Optimus to contact your previous employers on your behalf.</p>
         <p class="text-muted small mb-3">Referencing cannot proceed until this declaration has been signed.</p>
+        {% if employment_entries and not coverage_ok %}
+        {# Coverage gate — surface the warning beside the button and
+           disable it until 5 years are accounted for. Backend
+           `_check_employment_complete` still hard-gates the vetting
+           page; this is the upstream stop so the associate isn't
+           sent forward only to be bounced back. #}
+        <div class="alert alert-warning small mb-3 mb-md-2">
+            <i class="fas fa-exclamation-triangle me-1"></i>
+            {{ coverage_msg or "Add another employment or gap entry above so your timeline reaches back five years." }}
+        </div>
+        <button type="button" class="btn btn-primary" disabled
+                title="Add enough employment / gap entries to cover the full 5 years before signing.">
+            <i class="fas fa-file-signature me-1"></i> Sign Employment Reference Declaration
+        </button>
+        {% else %}
         <a href="/portal/employment-reference-declaration" class="btn btn-primary">
             <i class="fas fa-file-signature me-1"></i> Sign Employment Reference Declaration
         </a>
+        {% endif %}
     </div>
 </div>
 {% endblock %}
@@ -730,7 +767,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!entry) { alert('Entry not found'); return; }
             if (entry.is_gap) { alert('Gap entries cannot be edited here.'); return; }
 
-            // Populate the Add Employment form with every field captured on
+            // Populate the Save Employment form with every field captured on
             // the entry so the associate can edit any of them. Uses a
             // safe-set helper because a previous version of this function
             // called `.value` on a referee_email input that the Req 22
