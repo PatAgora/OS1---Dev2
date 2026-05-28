@@ -3516,6 +3516,34 @@ def _vat_band_label(treatment: str) -> str:
     }.get(treatment, f"Expenses ({treatment})")
 
 
+def _resolve_hirer_name(engagement, session=None) -> str:
+    """Req 15 — Hirer Name on the Assignment Schedule must be the
+    CLIENT'S name, not the project / engagement name. Resolution order:
+      1. Client.name via Engagement.client_id FK (cleanest)
+      2. Engagement.client free-text (legacy / pre-FK rows)
+      3. Empty string (so the staff member sees a blank field rather
+         than the wrong default flowing into the assignment sheet)
+    """
+    if engagement is None:
+        return ""
+    # (1) FK path.
+    try:
+        from sqlalchemy.orm import object_session
+        sess = session or object_session(engagement)
+        cid = getattr(engagement, "client_id", None)
+        if sess is not None and cid:
+            client = sess.get(Client, cid)
+            if client is not None and (client.name or "").strip():
+                return client.name.strip()
+    except Exception:
+        pass
+    # (2) Free-text fallback.
+    if (getattr(engagement, "client", "") or "").strip():
+        return engagement.client.strip()
+    # (3) Empty — better than silently injecting engagement.name.
+    return ""
+
+
 def _invoice_default_subject(invoice) -> str:
     """Standard send-invoice subject template:
        "Invoice [INV-YYYY-MM-XXXXX-CC] – [Project Name] – [Month Year]"
@@ -7916,7 +7944,7 @@ def paystream_capture(cand_id: int):
             captured={
                 # --- Auto-populated (editable — override persists) ---
                 "worker_name": _or(latest_app.assignment_worker_name, cand.name or ""),
-                "hirer_name": _or(latest_app.assignment_hirer_name, engagement.name if engagement else ""),
+                "hirer_name": _or(latest_app.assignment_hirer_name, _resolve_hirer_name(engagement)),
                 # Start date: assignment override → offer → engagement.
                 "start_date": (
                     latest_app.assignment_start_date.isoformat()
@@ -8538,7 +8566,7 @@ def _build_paystream_field_values(cand, latest_app, job, engagement, conduct_reg
         return ""
 
     worker_name = _or(latest_app.assignment_worker_name, cand.name or "")
-    hirer_name = _or(latest_app.assignment_hirer_name, engagement.name if engagement else "")
+    hirer_name = _or(latest_app.assignment_hirer_name, _resolve_hirer_name(engagement))
     role_title = _or(
         latest_app.assignment_role_title,
         latest_app.offer_role_title or (job.title if job else ""),
