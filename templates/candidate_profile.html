@@ -2844,8 +2844,10 @@
             {% if activities and activities|length %}
               {% for a in activities %}
                 <div class="activity-item">
-                  <div class="activity-icon {{ a.type }}">
-                    {% if a.type == 'call' %}
+                  <div class="activity-icon {{ a.type }}" {% if a.color %}style="background:{{ a.color }};color:#fff;"{% endif %}>
+                    {% if a.icon %}
+                      <i class="fas {{ a.icon }}"></i>
+                    {% elif a.type == 'call' %}
                       <i class="fas fa-phone"></i>
                     {% elif a.type == 'email' %}
                       <i class="fas fa-envelope"></i>

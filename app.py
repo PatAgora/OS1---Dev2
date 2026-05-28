@@ -26853,9 +26853,237 @@ def candidate_profile(cand_id: int):
                     'details': content[:300],
                 })
 
-            # Sort by timestamp descending
+            # ---- Vetting check lifecycle events ----
+            # Every status transition surfaces in the feed: when it was
+            # created (Started), when it completed/failed/N/A, and when
+            # QC reviewed it. Engagement ref is included so archived
+            # checks read in context.
+            try:
+                _eng_ref_cache = {}
+                def _eng_ref(eng_id):
+                    if not eng_id:
+                        return ""
+                    if eng_id in _eng_ref_cache:
+                        return _eng_ref_cache[eng_id]
+                    _e = s.get(Engagement, eng_id)
+                    _eng_ref_cache[eng_id] = (
+                        ((_e.ref or _e.name or "") if _e else "")
+                    )
+                    return _eng_ref_cache[eng_id]
+                for vc in s.scalars(
+                    select(VettingCheck)
+                    .where(VettingCheck.candidate_id == cand_id)
+                    .order_by(VettingCheck.created_at.desc())
+                    .limit(80)
+                ).all():
+                    _ref_label = _eng_ref(getattr(vc, "engagement_id", None))
+                    _ctx = f" — {_ref_label}" if _ref_label else ""
+                    if vc.created_at:
+                        activity_feed.append({
+                            'type': 'vetting',
+                            'icon': 'fa-shield-alt',
+                            'color': '#0ea5e9',
+                            'title': f'Vetting check started: {vc.check_type}',
+                            'timestamp': vc.created_at,
+                            'details': f'Status: {vc.status or "NOT STARTED"}{_ctx}',
+                        })
+                    if vc.completed_at and (vc.status or "").upper() in (
+                        "COMPLETE", "FAILED", "N/A", "CHECK STILL IN DATE",
+                    ):
+                        activity_feed.append({
+                            'type': 'vetting',
+                            'icon': 'fa-shield-alt',
+                            'color': '#10b981' if (vc.status or "").upper() == 'COMPLETE' else (
+                                '#ef4444' if (vc.status or "").upper() == 'FAILED' else '#6b7280'
+                            ),
+                            'title': f'Vetting check {(vc.status or "").lower()}: {vc.check_type}',
+                            'timestamp': vc.completed_at,
+                            'details': (vc.notes or "")[:300] + _ctx,
+                        })
+                    if getattr(vc, "qc_reviewed_at", None) and (vc.qc_status or ""):
+                        activity_feed.append({
+                            'type': 'qc',
+                            'icon': 'fa-clipboard-check',
+                            'color': '#10b981' if (vc.qc_status or "").lower() == 'qc_approved' else '#ef4444',
+                            'title': f'QC {vc.qc_status}: {vc.check_type}',
+                            'timestamp': vc.qc_reviewed_at,
+                            'details': ((vc.qc_notes or "")[:300]) + _ctx,
+                        })
+            except Exception:
+                current_app.logger.exception("activity feed: vetting events failed")
+
+            # ---- Reference request lifecycle events ----
+            try:
+                for rr in s.scalars(
+                    select(ReferenceRequest)
+                    .where(ReferenceRequest.candidate_id == cand_id)
+                    .order_by(ReferenceRequest.created_at.desc())
+                    .limit(80)
+                ).all():
+                    _ref_label = _eng_ref(getattr(rr, "engagement_id", None))
+                    _ctx = f" — {_ref_label}" if _ref_label else ""
+                    _company = rr.company_name or rr.referee_email or "reference"
+                    if rr.created_at:
+                        activity_feed.append({
+                            'type': 'reference',
+                            'icon': 'fa-address-book',
+                            'color': '#6366f1',
+                            'title': f'Reference request created: {_company}',
+                            'timestamp': rr.created_at,
+                            'details': f'Recipient type: {rr.recipient_type or "company"}{_ctx}',
+                        })
+                    if rr.sent_at:
+                        activity_feed.append({
+                            'type': 'reference',
+                            'icon': 'fa-paper-plane',
+                            'color': '#6366f1',
+                            'title': f'Reference request sent: {_company}',
+                            'timestamp': rr.sent_at,
+                            'details': f'Email: {rr.referee_email or ""}{_ctx}',
+                        })
+                    if getattr(rr, "last_chased_at", None):
+                        activity_feed.append({
+                            'type': 'reference',
+                            'icon': 'fa-redo',
+                            'color': '#f59e0b',
+                            'title': f'Reference chased: {_company}',
+                            'timestamp': rr.last_chased_at,
+                            'details': f'Chase #{rr.chase_count or 1}{_ctx}',
+                        })
+                    if rr.received_at:
+                        activity_feed.append({
+                            'type': 'reference',
+                            'icon': 'fa-envelope-open-text',
+                            'color': '#10b981',
+                            'title': f'Reference received: {_company}',
+                            'timestamp': rr.received_at,
+                            'details': (rr.notes or "")[:200] + _ctx,
+                        })
+                    if getattr(rr, "agreed_at", None):
+                        activity_feed.append({
+                            'type': 'reference',
+                            'icon': 'fa-check-double',
+                            'color': '#059669',
+                            'title': f'Reference accepted: {_company}',
+                            'timestamp': rr.agreed_at,
+                            'details': _ctx.lstrip(" —"),
+                        })
+            except Exception:
+                current_app.logger.exception("activity feed: reference events failed")
+
+            # ---- Document uploads ----
+            try:
+                _doc_label = {
+                    "cv": "CV uploaded",
+                    "cv_resume": "CV uploaded",
+                    "proof_of_identity": "Proof of identity uploaded",
+                    "proof_of_address": "Proof of address uploaded",
+                    "right_to_work": "Right to work document uploaded",
+                    "qualifications": "Qualification document uploaded",
+                    "hmrc_record": "HMRC Employment Record uploaded",
+                    "gap_evidence": "Gap evidence uploaded",
+                    "expense_receipt": "Expense receipt uploaded",
+                    "signed_contract": "Signed contract stored",
+                    "consent_signed": "GDPR consent signed",
+                    "reference_reply": "Reference reply uploaded",
+                    "verifile_final_report": "Verifile final report stored",
+                    "verifile_report": "Verifile report stored",
+                }
+                for d in s.scalars(
+                    select(Document)
+                    .where(Document.candidate_id == cand_id)
+                    .order_by(Document.uploaded_at.desc())
+                    .limit(60)
+                ).all():
+                    if not d.uploaded_at:
+                        continue
+                    _dtype = (d.doc_type or "").lower()
+                    activity_feed.append({
+                        'type': 'document',
+                        'icon': 'fa-file-upload',
+                        'color': '#0891b2',
+                        'title': _doc_label.get(
+                            _dtype,
+                            f'Document uploaded: {(_dtype or "document").replace("_", " ").title()}',
+                        ),
+                        'timestamp': d.uploaded_at,
+                        'details': (d.original_name or d.filename or "")[:200],
+                    })
+            except Exception:
+                current_app.logger.exception("activity feed: documents failed")
+
+            # ---- Candidate-level lifecycle timestamps ----
+            # Declarations, conduct regs, umbrella, HMRC, intro-email.
+            try:
+                _cand_events = [
+                    ("intro_to_vetting_sent_at", 'fa-envelope', '#3b82f6',
+                     'Intro to Vetting email sent', ''),
+                    ("employment_ref_declaration_signed_at", 'fa-signature', '#059669',
+                     'Employment Reference Declaration signed', ''),
+                    ("secondary_job_declaration_signed_at", 'fa-signature', '#059669',
+                     'Secondary Job Declaration signed', ''),
+                    ("conduct_regs_decision_at", 'fa-balance-scale', '#7c3aed',
+                     'Conduct Regulations decision recorded', ''),
+                    ("umbrella_assignment_sent_at", 'fa-paper-plane', '#0ea5e9',
+                     'Umbrella assignment sheet sent', ''),
+                    ("umbrella_assignment_signed_at", 'fa-file-signature', '#059669',
+                     'Umbrella assignment sheet signed', ''),
+                    ("hmrc_record_uploaded_at", 'fa-file-upload', '#0891b2',
+                     'HMRC Employment Record uploaded', ''),
+                ]
+                for _attr, _icon, _color, _title, _details in _cand_events:
+                    _ts = getattr(cand, _attr, None)
+                    if _ts:
+                        activity_feed.append({
+                            'type': 'candidate',
+                            'icon': _icon,
+                            'color': _color,
+                            'title': _title,
+                            'timestamp': _ts,
+                            'details': _details,
+                        })
+            except Exception:
+                current_app.logger.exception("activity feed: candidate lifecycle events failed")
+
+            # ---- AuditLog rows for this candidate ----
+            # Catches anything log_audit_event() captures across the
+            # codebase that the timestamp-based pulls above might miss
+            # (engagement changes that affect this candidate, manual
+            # overrides, admin actions, etc.). Limited to candidate-
+            # scoped events to keep the feed focused.
+            try:
+                _audit_rows = s.scalars(
+                    select(AuditLog)
+                    .where(AuditLog.resource_type.in_(
+                        ("candidate", "application", "vetting", "references", "workflow")
+                    ))
+                    .where(AuditLog.resource_id == cand_id)
+                    .order_by(AuditLog.timestamp.desc())
+                    .limit(80)
+                ).all()
+                _seen_action_sigs = set()
+                for row in _audit_rows:
+                    sig = (row.timestamp, row.event_type, row.action or "")
+                    if sig in _seen_action_sigs:
+                        continue
+                    _seen_action_sigs.add(sig)
+                    _user = row.user_email or "system"
+                    activity_feed.append({
+                        'type': f'audit:{row.event_category}',
+                        'icon': 'fa-history',
+                        'color': '#475569',
+                        'title': (row.action or row.event_type or "Audit event")[:120],
+                        'timestamp': row.timestamp,
+                        'details': f'{row.event_category} / {row.event_type} — {_user}',
+                    })
+            except Exception:
+                current_app.logger.exception("activity feed: audit log failed")
+
+            # Sort by timestamp descending. Limit raised so the
+            # comprehensive feed isn't truncated to 30 — at 150 staff
+            # can scroll a full candidate history without paging.
             activity_feed.sort(key=lambda x: x['timestamp'] if x['timestamp'] else datetime.datetime.min, reverse=True)
-            activity_feed = activity_feed[:30]  # Limit to 30 most recent
+            activity_feed = activity_feed[:150]
         except Exception:
             pass
 
@@ -26866,11 +27094,17 @@ def candidate_profile(cand_id: int):
     all_placements = placements_active + placements_historic
 
     # Build activity items for the template's activity feed
-    # The template expects objects with: type, title, description, created_at
+    # The template expects objects with: type, title, description, created_at.
+    # Icon + colour are passed through so the Activity Feed renders the
+    # right Font Awesome glyph for the new event types (vetting, qc,
+    # reference, document, candidate, audit:*) without needing a switch
+    # in the template.
     activities = []
     for af in activity_feed:
         activities.append(type('Activity', (), {
             'type': af.get('type', 'note'),
+            'icon': af.get('icon', 'fa-sticky-note'),
+            'color': af.get('color', '#6b7280'),
             'title': af.get('title', ''),
             'description': af.get('details', ''),
             'created_at': af.get('timestamp'),
