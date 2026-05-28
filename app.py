@@ -3564,10 +3564,20 @@ def _reset_consent_and_declarations_for_new_engagement(session, candidate_id, ne
         "umbrella_assignment_sent_at",
         "umbrella_assignment_signed_at",
         "intro_to_vetting_sent_at",
+        # HMRC record link resets too — the associate uploads a fresh
+        # HMRC employment record for the new engagement. The Document
+        # row stays in the DB so the prior PlacementSnapshot's
+        # hmrc_record_doc_id pointer still resolves for audit recall.
+        "hmrc_record_uploaded_at",
     ]
     for _f in reset_ts_fields:
         if hasattr(cand, _f):
             setattr(cand, _f, None)
+    # hmrc_record_doc_id is a FK Integer, not a timestamp, so it's
+    # reset separately (the FK target Document is intentionally NOT
+    # deleted — the prior snapshot still references it).
+    if hasattr(cand, "hmrc_record_doc_id"):
+        cand.hmrc_record_doc_id = None
     reset_str_fields = [
         "secondary_job_title",
         "secondary_job_signed_name",
@@ -3603,8 +3613,9 @@ def _reset_consent_and_declarations_for_new_engagement(session, candidate_id, ne
                 "Consent + declaration forms reset for new engagement "
                 "application. The associate will be prompted to re-sign "
                 "the Employment Reference Declaration, Secondary Job "
-                "Declaration, Conduct Regulations decision, and consent "
-                "form for this engagement."
+                "Declaration, Conduct Regulations decision, consent "
+                "form, and to upload a fresh HMRC employment record for "
+                "this engagement."
             ),
             created_at=datetime.datetime.utcnow(),
         ))
