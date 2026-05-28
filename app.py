@@ -26444,6 +26444,28 @@ def candidate_profile(cand_id: int):
         current_app.logger.exception("address_history tile: build failed")
         address_history_rows, address_history_total_years, address_history_meets_5y = [], 0.0, False
 
+    # Req 5 — surface the candidate's HMRC employment record on the
+    # admin profile under "Declarations, Consent & Employment History".
+    # Returns None when no record uploaded yet so the template can show
+    # the empty-state copy.
+    hmrc_record = None
+    try:
+        with Session(engine) as _s_hmrc:
+            _c = _s_hmrc.get(Candidate, cand_id)
+            _doc_id = getattr(_c, "hmrc_record_doc_id", None) if _c else None
+            if _doc_id:
+                doc_row = _s_hmrc.get(Document, _doc_id)
+                if doc_row is not None:
+                    hmrc_record = {
+                        "id": doc_row.id,
+                        "original_name": getattr(doc_row, "original_name", "")
+                                          or getattr(doc_row, "filename", "")
+                                          or "HMRC record",
+                        "uploaded_at": getattr(_c, "hmrc_record_uploaded_at", None),
+                    }
+    except Exception:
+        current_app.logger.exception("candidate_profile: HMRC record lookup failed")
+
     # Req 28 — Verifile final-report PDFs stored against this candidate.
     # Surfaced under the Vetting Checks tile.
     verifile_final_reports = []
@@ -26471,6 +26493,7 @@ def candidate_profile(cand_id: int):
         appn=latest_app,            # can be None
         latest_app=latest_app,
         verifile_final_reports=verifile_final_reports,
+        hmrc_record=hmrc_record,
         interview_app=interview_app,
         interview_history=interview_history,
         cand=cand,
