@@ -23701,6 +23701,59 @@ def confirm_contract_signed(cand_id: int):
     return redirect(request.referrer or url_for("workflow"))
 
 
+@app.route("/candidate/<int:cand_id>/employment-ref-mark-signed", methods=["POST"])
+@login_required
+def employment_ref_mark_signed(cand_id: int):
+    """Admin override — flip Candidate.employment_ref_declaration_signed
+    to True when the Signable webhook didn't fire (or arrived
+    unmatched). Mirrors the existing `confirm_contract_signed` pattern.
+
+    The associate-side flag is what drives the green tick on
+    /portal/references/employment, so flipping it here makes both the
+    admin view and the associate view consistent immediately."""
+    with Session(engine) as s:
+        cand = s.get(Candidate, cand_id)
+        if not cand:
+            abort(404)
+        if getattr(cand, "employment_ref_declaration_signed", False):
+            flash("Employment Reference Declaration is already marked signed.", "info")
+            return redirect(request.referrer or url_for("candidate_profile", cand_id=cand_id))
+        try:
+            cand.employment_ref_declaration_signed = True
+            cand.employment_ref_declaration_signed_at = datetime.datetime.utcnow()
+            s.add(CandidateNote(
+                candidate_id=cand_id,
+                user_email=getattr(current_user, "email", "staff") or "staff",
+                note_type="activity",
+                content=(
+                    "Employment Reference Declaration manually marked as signed "
+                    f"by {getattr(current_user, 'email', 'staff') or 'staff'} "
+                    "(admin override — webhook not received from Signable)."
+                ),
+                created_at=datetime.datetime.utcnow(),
+            ))
+            try:
+                log_audit_event(
+                    "update", "vetting",
+                    f"Employment Reference Declaration manually marked signed "
+                    f"by {getattr(current_user, 'email', 'staff') or 'staff'}",
+                    "candidate", cand_id,
+                    {"override": True, "source": "admin_button"},
+                )
+            except Exception:
+                pass
+            s.commit()
+        except Exception as exc:
+            s.rollback()
+            current_app.logger.exception(
+                "employment_ref_mark_signed failed for cand %s", cand_id
+            )
+            flash(f"Could not mark declaration signed: {exc}", "danger")
+            return redirect(request.referrer or url_for("candidate_profile", cand_id=cand_id))
+    flash("Employment Reference Declaration marked as signed.", "success")
+    return redirect(request.referrer or url_for("candidate_profile", cand_id=cand_id))
+
+
 def _get_or_create_active_esig(
     s,
     *,
@@ -27775,9 +27828,9 @@ def reference_confirm_agreed(cand_id: int, ref_id: int):
             # straight to the uploads dir.
             orig_name = secure_filename(reply_file.filename) or "reference_reply"
             ext = orig_name.rsplit(".", 1)[-1].lower() if "." in orig_name else ""
-            if ext not in ("pdf", "eml", "msg", "doc", "docx"):
+            if ext not in ("pdf", "eml", "msg", "doc", "docx", "xls", "xlsx"):
                 flash(
-                    "Reply must be a PDF, EML, MSG, DOC or DOCX file.",
+                    "Reply must be a PDF, EML, MSG, DOC, DOCX, XLS or XLSX file.",
                     "warning",
                 )
                 return redirect(url_for("candidate_profile", cand_id=cand_id) + "#sec-refs")

@@ -1003,12 +1003,25 @@
             {# Employment Reference Declaration #}
             <div class="decl-row d-flex justify-content-between align-items-center py-2 px-2 rounded mb-1" style="cursor:pointer; border:1px solid #e5e7eb;" onclick="var d=this.nextElementSibling; d.style.display=d.style.display==='none'?'':'none';">
               <span style="font-size:0.85rem;"><i class="fas fa-file-signature me-2 text-muted"></i>Employment Reference Declaration</span>
-              <span>
+              <span onclick="event.stopPropagation();">
                 {% if cand.employment_ref_declaration_signed %}
                   <span class="badge bg-success" style="font-size:0.7rem;"><i class="fas fa-check-double me-1"></i>Signed (Signable)</span>
                   {% if cand.employment_ref_declaration_signed_at %}<span class="text-muted small ms-2">{{ cand.employment_ref_declaration_signed_at.strftime('%d %b %Y') }}</span>{% endif %}
                 {% else %}
                   <span class="badge bg-secondary" style="font-size:0.7rem;"><i class="fas fa-times-circle me-1"></i>Not Signed</span>
+                  {# Admin override — flips the flag when the Signable
+                     webhook didn't reach OS1. Stops the row's click
+                     from also toggling the expand panel. #}
+                  <form method="POST"
+                        action="{{ url_for('employment_ref_mark_signed', cand_id=cand.id) }}"
+                        class="d-inline ms-2"
+                        onsubmit="return confirm('Mark Employment Reference Declaration as signed for {{ cand.name }}? This is an admin override for when the Signable webhook did not arrive automatically.');">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-sm btn-outline-success"
+                            style="font-size:0.7rem; padding:0.1rem 0.5rem;">
+                      <i class="fas fa-check me-1"></i>Update to signed
+                    </button>
+                  </form>
                 {% endif %}
               </span>
             </div>
@@ -2610,7 +2623,7 @@
                                 action="{{ url_for('reference_confirm_agreed', cand_id=cand.id, ref_id=ref.id) }}"
                                 class="d-flex flex-column gap-1">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <input type="file" name="reply_file" accept=".pdf,.eml,.msg,.doc,.docx" required class="form-control form-control-sm" style="font-size:0.65rem; padding:0.1rem 0.3rem;">
+                            <input type="file" name="reply_file" accept=".pdf,.eml,.msg,.doc,.docx,.xls,.xlsx" required class="form-control form-control-sm" style="font-size:0.65rem; padding:0.1rem 0.3rem;">
                             <button type="submit" class="btn btn-sm btn-outline-success" style="font-size:0.65rem; padding:0.1rem 0.4rem;">
                               <i class="fas fa-check me-1"></i>Mark Agreed
                             </button>
