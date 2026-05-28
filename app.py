@@ -19401,6 +19401,20 @@ def engagement_edit(eng_id):
     approvers = []
     staff_users = []
     invoice_recipient_emails_list = []
+    # When the engagement's own billing fields are blank, fall back to
+    # the linked Client's defaults so the admin sees the data they
+    # already entered on /admin/clients/<id>/edit rather than blanks.
+    # Saving still writes to the engagement row, so per-engagement
+    # overrides are possible. This shape is what the template renders.
+    eff_billing = {
+        "address_line1": (engagement.billing_address_line1 or "").strip(),
+        "address_line2": (engagement.billing_address_line2 or "").strip(),
+        "city": (engagement.billing_city or "").strip(),
+        "postcode": (engagement.billing_postcode or "").strip(),
+        "company_reg": (engagement.client_company_reg or "").strip(),
+        "vat_number": (engagement.client_vat_number or "").strip(),
+        "inherited_from_client": False,
+    }
     try:
         with Session(engine) as _s:
             clients = _s.scalars(select(Client).order_by(Client.name)).all()
@@ -19419,6 +19433,39 @@ def engagement_edit(eng_id):
                     invoice_recipient_emails_list = json.loads(_e.invoice_recipient_emails)
             except Exception:
                 pass
+
+            # Client-level fallbacks. Apply only to fields the engagement
+            # leaves blank so a per-engagement override is preserved.
+            try:
+                _client = (
+                    _s.get(Client, engagement.client_id)
+                    if getattr(engagement, "client_id", None) else None
+                )
+            except Exception:
+                _client = None
+            if _client is not None:
+                _fallback_map = {
+                    "address_line1": _client.billing_address_line1,
+                    "address_line2": _client.billing_address_line2,
+                    "city": _client.billing_city,
+                    "postcode": _client.billing_postcode,
+                    "company_reg": _client.company_reg,
+                    "vat_number": _client.vat_number,
+                }
+                for _k, _v in _fallback_map.items():
+                    if not eff_billing.get(_k) and (_v or "").strip():
+                        eff_billing[_k] = (_v or "").strip()
+                        eff_billing["inherited_from_client"] = True
+                # Invoice recipient emails fallback: client carries a
+                # string field, may be comma/semicolon/newline-separated.
+                if not invoice_recipient_emails_list and (_client.invoice_recipient_emails or "").strip():
+                    invoice_recipient_emails_list = [
+                        e.strip() for e in re.split(
+                            r"[,;\n\r]+", _client.invoice_recipient_emails
+                        )
+                        if e.strip() and "@" in e
+                    ]
+                    eff_billing["inherited_from_client"] = True
     except Exception:
         pass
 
@@ -19431,6 +19478,7 @@ def engagement_edit(eng_id):
         approvers=approvers,
         staff_users=staff_users,
         invoice_recipient_emails_list=invoice_recipient_emails_list,
+        eff_billing=eff_billing,
     )
 
 

@@ -187,30 +187,36 @@
     </div>
 
     <h6 class="text-muted mt-4 mb-2">Billing address</h6>
+    {% if eff_billing and eff_billing.inherited_from_client %}
+    <div class="alert alert-info py-2 mb-2" style="font-size:0.85rem;">
+      <i class="fas fa-info-circle me-1"></i>
+      Some fields below are pre-filled from the linked Client. Editing here saves a per-engagement override.
+    </div>
+    {% endif %}
     <div class="row g-3">
       <div class="col-md-6">
         <label class="form-label">Address line 1</label>
-        <input type="text" name="billing_address_line1" class="form-control" value="{{ engagement.billing_address_line1 or '' }}">
+        <input type="text" name="billing_address_line1" class="form-control" value="{{ eff_billing.address_line1 if eff_billing else (engagement.billing_address_line1 or '') }}">
       </div>
       <div class="col-md-6">
         <label class="form-label">Address line 2</label>
-        <input type="text" name="billing_address_line2" class="form-control" value="{{ engagement.billing_address_line2 or '' }}">
+        <input type="text" name="billing_address_line2" class="form-control" value="{{ eff_billing.address_line2 if eff_billing else (engagement.billing_address_line2 or '') }}">
       </div>
       <div class="col-md-4">
         <label class="form-label">City</label>
-        <input type="text" name="billing_city" class="form-control" value="{{ engagement.billing_city or '' }}">
+        <input type="text" name="billing_city" class="form-control" value="{{ eff_billing.city if eff_billing else (engagement.billing_city or '') }}">
       </div>
       <div class="col-md-3">
         <label class="form-label">Postcode</label>
-        <input type="text" name="billing_postcode" class="form-control" value="{{ engagement.billing_postcode or '' }}">
+        <input type="text" name="billing_postcode" class="form-control" value="{{ eff_billing.postcode if eff_billing else (engagement.billing_postcode or '') }}">
       </div>
       <div class="col-md-3">
         <label class="form-label">Company reg #</label>
-        <input type="text" name="client_company_reg" class="form-control" value="{{ engagement.client_company_reg or '' }}">
+        <input type="text" name="client_company_reg" class="form-control" value="{{ eff_billing.company_reg if eff_billing else (engagement.client_company_reg or '') }}">
       </div>
       <div class="col-md-2">
         <label class="form-label">VAT #</label>
-        <input type="text" name="client_vat_number" class="form-control" value="{{ engagement.client_vat_number or '' }}">
+        <input type="text" name="client_vat_number" class="form-control" value="{{ eff_billing.vat_number if eff_billing else (engagement.client_vat_number or '') }}">
       </div>
     </div>
 
@@ -218,7 +224,7 @@
     <div class="mb-3">
       <label class="form-label">Recipient email addresses</label>
       <textarea name="invoice_recipient_emails" class="form-control" rows="2" placeholder="finance@client.com, accounts@client.com">{{ invoice_recipient_emails_list | join(', ') }}</textarea>
-      <div class="form-text">Comma- or newline-separated. Used as the default To list when sending invoices (editable at send time).</div>
+      <div class="form-text">Comma- or newline-separated. Used as the default To list when sending invoices (editable at send time). Blank inherits from the linked Client.</div>
     </div>
 
     <div class="form-check mt-3">
