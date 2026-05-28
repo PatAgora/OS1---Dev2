@@ -20575,19 +20575,19 @@ def action_verifile(app_id):
 VERIFILE_DBS_LEVEL = os.getenv("VERIFILE_DBS_LEVEL", "Basic")  # Basic, Standard, or Enhanced
 
 VERIFILE_CHECK_MAP = {
-    # Correct Verifile CheckTypeId values (from GET /metadata/checktypes)
-    "DBS Check": "UKCriminalRecordBasicEnglandWales",
+    # Req 26 — only the checks Optimus explicitly maps to Verifile.
+    # References, Qualifications, Professional Registration and
+    # Directorship / Disqualification are MANUAL (do not map) per
+    # the Optimus clarification and are intentionally absent here so
+    # `verifile_submit_all_checks` filters them out on the way in.
+    # Employment History and Address History are retired entirely.
+    #
+    # Package-bundled (peeled into Package A / B by the router):
+    "DBS Check": "UKCriminalRecordBasicEnglandWales",  # Scotland variant swapped in by _verifile_resolve_check_id
     "Identity Verification": "UKOnlineIDCheck",
     "Right to Work": "UKRightToWorkDigitalConditional",
-    # Req 26 — Employment History and Address History retired as vetting checks.
-    "References": "CharacterProfessionalReferenceUK",
-    "Qualifications": "AcademicQualificationUK",
-    "Professional Registration": "ProfessionalMembershipQualificationUK",
-
-    # Credit and Financial Checks
-    # Req 26 — Optimus uses the Equifax credit product, not Experian.
     "Credit Check": "UKCreditCheckEquifax",
-    "Directorship / Disqualification": "UKInvestigativeDirectorshipsSearch",
+    # Standalone Verifile orders (flow through the residual CheckGroups path):
     "Sanctions / PEP": "GlobalFraudandSanctionsSearch",
     "Social Media Review": "ClassicSocialMediaSearch",
 }
