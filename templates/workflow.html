@@ -1025,19 +1025,22 @@
         <div class="card-actions">
           <a href="{{ url_for('candidate_profile', cand_id=card.candidate_id) }}"
              class="btn btn-outline-primary btn-sm"
-             title="View Profile">
+             target="_blank" rel="noopener"
+             title="View Profile (opens in new tab)">
             <i class="fas fa-user"></i>
           </a>
           {% if card.get('job_id') and card.get('engagement_id') %}
           <a href="{{ url_for('engagement_job_detail', eng_id=card.engagement_id, job_id=card.job_id) }}"
              class="btn btn-outline-secondary btn-sm"
-             title="View Job">
+             target="_blank" rel="noopener"
+             title="View Job (opens in new tab)">
             <i class="fas fa-briefcase"></i>
           </a>
           {% elif card.get('job_id') %}
           <a href="{{ url_for('job_edit', job_id=card.job_id) }}"
              class="btn btn-outline-secondary btn-sm"
-             title="View Job">
+             target="_blank" rel="noopener"
+             title="View Job (opens in new tab)">
             <i class="fas fa-briefcase"></i>
           </a>
           {% endif %}
@@ -1074,12 +1077,16 @@
           </button>
           {% elif stage.id == 'shortlist' %}
           <a href="{{ url_for('candidate_profile', cand_id=card.candidate_id) }}?action=schedule_interview#sec-interview"
-             class="btn btn-primary btn-sm" title="Schedule Interview">
+             class="btn btn-primary btn-sm"
+             target="_blank" rel="noopener"
+             title="Schedule Interview (opens in new tab)">
             <i class="fas fa-calendar-plus"></i>
           </a>
           {% elif stage.id == 'ia' %}
           <a href="{{ url_for('candidate_profile', cand_id=card.candidate_id) }}?action=schedule_interview#sec-interview"
-             class="btn btn-primary btn-sm" title="Schedule Interview">
+             class="btn btn-primary btn-sm"
+             target="_blank" rel="noopener"
+             title="Schedule Interview (opens in new tab)">
             <i class="fas fa-calendar-plus"></i>
           </a>
           <button class="btn btn-success btn-sm" onclick="advanceStage({{ card.id }}, 'Client Review')" title="Pass I&A">
@@ -1087,7 +1094,9 @@
           </button>
           {% elif stage.id == 'client_review' %}
           <a href="{{ url_for('offer_capture', cand_id=card.candidate_id) }}"
-             class="btn btn-success btn-sm" title="Make Offer">
+             class="btn btn-success btn-sm"
+             target="_blank" rel="noopener"
+             title="Make Offer (opens in new tab)">
             <i class="fas fa-hand-holding-usd"></i>
           </a>
           {% elif stage.id == 'offered' %}
@@ -1107,13 +1116,18 @@
           {# No "Placed" advance button — signed contracts move to Placements section #}
           {% endif %}
 
-          {# Vetting triggers — link to candidate profile so staff sees the email preview #}
+          {# Vetting triggers — link to candidate profile so staff sees the email preview.
+             Req 40: open in a new tab so the workflow stays visible. #}
           <a href="{{ url_for('candidate_profile', cand_id=card.candidate_id) }}?action=start_referencing#sec-vetting"
-             class="btn btn-info btn-sm" title="Start Referencing">
+             class="btn btn-info btn-sm"
+             target="_blank" rel="noopener"
+             title="Start Referencing (opens in new tab)">
             <i class="fas fa-envelope"></i>
           </a>
           <a href="{{ url_for('candidate_profile', cand_id=card.candidate_id) }}?action=start_vetting#sec-vetting"
-             class="btn btn-warning btn-sm" title="Start Full Vetting">
+             class="btn btn-warning btn-sm"
+             target="_blank" rel="noopener"
+             title="Start Full Vetting (opens in new tab)">
             <i class="fas fa-shield-alt"></i>
           </a>
 
