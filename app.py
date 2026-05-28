@@ -3516,12 +3516,152 @@ def _vat_band_label(treatment: str) -> str:
     }.get(treatment, f"Expenses ({treatment})")
 
 
+def _take_placement_snapshot(session, candidate_id, application_id):
+    """Req 32 — frozen audit snapshot of the candidate-level state at
+    the moment of a placement. Captures the things that should NOT
+    reset across engagements but DO need to be auditable per-placement
+    (declarations, address history, key form flags). The live profile
+    tiles continue to read the Candidate / AddressHistory rows directly
+    so they update as the associate edits the portal — this snapshot
+    just lets staff recall what was true at placement.
+
+    Idempotent: one row per (candidate_id, application_id). If a row
+    already exists it's left alone (don't overwrite the original
+    placement-time state).
+    """
+    if not (candidate_id and application_id):
+        return None
+    try:
+        existing = session.scalar(
+            select(PlacementSnapshot)
+            .where(PlacementSnapshot.candidate_id == candidate_id)
+            .where(PlacementSnapshot.application_id == application_id)
+        )
+        if existing:
+            return existing
+    except Exception:
+        existing = None
+    try:
+        cand = session.get(Candidate, candidate_id)
+    except Exception:
+        cand = None
+    if cand is None:
+        return None
+
+    def _iso(ts):
+        try:
+            return ts.isoformat() if ts else None
+        except Exception:
+            return None
+
+    # Address history rows at this moment, frozen into the JSON.
+    address_history = []
+    try:
+        for r in session.execute(text(
+            "SELECT id, address_line1, address_line2, city, postcode, country, "
+            "       from_date, to_date, is_current "
+            "FROM address_history WHERE candidate_id = :cid "
+            "ORDER BY COALESCE(from_date, '1900-01-01') DESC"
+        ).bindparams(cid=candidate_id)).all():
+            address_history.append({
+                "id": r[0],
+                "address_line1": r[1] or "",
+                "address_line2": r[2] or "",
+                "city": r[3] or "",
+                "postcode": r[4] or "",
+                "country": r[5] or "",
+                "from_date": _iso(r[6]),
+                "to_date": _iso(r[7]),
+                "is_current": bool(r[8]),
+            })
+    except Exception:
+        address_history = []
+
+    # Engagement linkage from the application (best-effort).
+    eng_id = None
+    eng_ref = ""
+    eng_name = ""
+    try:
+        appn = session.get(Application, application_id)
+        if appn and appn.job_id:
+            _job = session.get(Job, appn.job_id)
+            if _job and _job.engagement_id:
+                eng_id = _job.engagement_id
+                _eng = session.get(Engagement, eng_id)
+                if _eng:
+                    eng_ref = _eng.ref or ""
+                    eng_name = _eng.name or ""
+    except Exception:
+        pass
+
+    payload = {
+        "engagement_ref": eng_ref,
+        "engagement_name": eng_name,
+        "declarations": {
+            "employment_ref_signed": bool(
+                getattr(cand, "employment_ref_declaration_signed", False)
+            ),
+            "employment_ref_signed_at": _iso(
+                getattr(cand, "employment_ref_declaration_signed_at", None)
+            ),
+            "secondary_job_signed": bool(
+                getattr(cand, "secondary_job_declaration_signed", False)
+            ),
+            "secondary_job_signed_at": _iso(
+                getattr(cand, "secondary_job_declaration_signed_at", None)
+            ),
+            "secondary_job_has_secondary": bool(
+                getattr(cand, "secondary_job_has_secondary", False)
+            ),
+            "secondary_job_title": getattr(cand, "secondary_job_title", "") or "",
+            "conduct_regs_opted_in": getattr(cand, "conduct_regs_opted_in", None),
+            "conduct_regs_decision_at": _iso(
+                getattr(cand, "conduct_regs_decision_at", None)
+            ),
+            "umbrella_assignment_sent": bool(
+                getattr(cand, "umbrella_assignment_sent", False)
+            ),
+            "umbrella_assignment_sent_at": _iso(
+                getattr(cand, "umbrella_assignment_sent_at", None)
+            ),
+            "umbrella_assignment_signed": bool(
+                getattr(cand, "umbrella_assignment_signed", False)
+            ),
+            "umbrella_assignment_signed_at": _iso(
+                getattr(cand, "umbrella_assignment_signed_at", None)
+            ),
+            "hmrc_record_doc_id": getattr(cand, "hmrc_record_doc_id", None),
+            "hmrc_record_uploaded_at": _iso(
+                getattr(cand, "hmrc_record_uploaded_at", None)
+            ),
+        },
+        "address_history": address_history,
+        "candidate_status_at_placement": cand.status or "",
+        "trustid_rtw_date": _iso(getattr(cand, "trustid_rtw_date", None)),
+        "trustid_idv_date": _iso(getattr(cand, "trustid_idv_date", None)),
+        "trustid_dbs_date": _iso(getattr(cand, "trustid_dbs_date", None)),
+    }
+    snap = PlacementSnapshot(
+        candidate_id=candidate_id,
+        application_id=application_id,
+        engagement_id=eng_id,
+        snapshotted_at=datetime.datetime.utcnow(),
+        payload=json.dumps(payload, default=str),
+    )
+    session.add(snap)
+    return snap
+
+
 def _lock_history_on_placement(session, candidate_id, application_id):
     """Req 32 — when an application transitions to Placed, freeze all
     current EmploymentHistory + ReferenceRequest rows for that candidate
     so the data the placement was based on can never be retrospectively
     amended (audit requirement). New rows added post-placement remain
     editable until the next placement locks them too.
+
+    Also takes a PlacementSnapshot of declaration timestamps + address
+    history for audit recall (live profile tiles continue to track the
+    portal; the snapshot just freezes what was true at placement).
 
     Idempotent — already-locked rows are left untouched.
     """
@@ -3554,6 +3694,13 @@ def _lock_history_on_placement(session, candidate_id, application_id):
     except Exception:
         current_app.logger.exception(
             "placement-lock: reference_requests lock failed for cand %s", candidate_id
+        )
+    try:
+        _take_placement_snapshot(session, candidate_id, application_id)
+    except Exception:
+        current_app.logger.exception(
+            "placement-lock: snapshot failed for cand %s app %s",
+            candidate_id, application_id,
         )
     return locked_count
 
@@ -11537,6 +11684,29 @@ class CandidateNote(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
+class PlacementSnapshot(Base):
+    """Req 32 — frozen audit record taken at each placement event.
+
+    One row per Application that transitions to Placed. Captures the
+    candidate-level state that the placement was based on — declaration
+    timestamps, address history, key vetting / form flags — so an
+    auditor can recall exactly what was true at that moment, even after
+    the live profile is overwritten by later edits on the Associate
+    Portal.
+
+    Payload is a JSON blob (frozen schema below) so this table doesn't
+    grow a column every time something new needs auditing.
+    """
+    __tablename__ = "placement_snapshots"
+    id = Column(Integer, primary_key=True)
+    candidate_id = Column(Integer, ForeignKey("candidates.id"), nullable=False, index=True)
+    application_id = Column(Integer, nullable=False, index=True)
+    engagement_id = Column(Integer, ForeignKey("engagements.id"), nullable=True, index=True)
+    snapshotted_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    payload = Column(Text, default="{}")  # JSON: see _take_placement_snapshot
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 class AssignmentTemplate(Base):
     """Uploadable DOCX templates for umbrella Assignment Schedules.
     Staff uploads one template per umbrella company via the config page.
@@ -12800,6 +12970,18 @@ try:
             "ALTER TABLE reference_requests ADD COLUMN locked BOOLEAN DEFAULT FALSE",
             "ALTER TABLE reference_requests ADD COLUMN locked_at TIMESTAMP",
             "ALTER TABLE reference_requests ADD COLUMN locked_by_application_id INTEGER",
+            # Req 32 — PlacementSnapshot table (declarative_base may not
+            # have already created it on an existing DB, so we issue a
+            # safe CREATE IF NOT EXISTS to cover both paths).
+            """CREATE TABLE IF NOT EXISTS placement_snapshots (
+                id SERIAL PRIMARY KEY,
+                candidate_id INTEGER NOT NULL REFERENCES candidates(id),
+                application_id INTEGER NOT NULL,
+                engagement_id INTEGER REFERENCES engagements(id),
+                snapshotted_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                payload TEXT DEFAULT '{}',
+                created_at TIMESTAMP DEFAULT NOW()
+            )""",
             "ALTER TABLE esign_requests ADD COLUMN candidate_id INTEGER REFERENCES candidates(id)",
             "ALTER TABLE esign_requests ADD COLUMN engagement_id INTEGER REFERENCES engagements(id)",
             "ALTER TABLE esign_requests ADD COLUMN signing_url VARCHAR(500)",
@@ -12926,6 +13108,33 @@ Optimus Compliance Team"""))
             """))
         except Exception:
             pass
+
+        # Req 32 — one-shot backfill of the placement lock + snapshot for
+        # applications that are ALREADY Placed at boot (so test data
+        # placed before this code shipped still locks / snapshots).
+        # Idempotent: _take_placement_snapshot returns the existing row,
+        # and the lock UPDATEs only flip rows whose locked flag is FALSE
+        # or NULL.
+        try:
+            from sqlalchemy.orm import Session as _SessionLocal
+            with _SessionLocal(engine) as _bf_s:
+                _placed_rows = _bf_s.execute(text(
+                    "SELECT id, candidate_id FROM applications "
+                    "WHERE status = 'Placed' ORDER BY id"
+                )).all()
+                for _row in _placed_rows:
+                    _app_id, _cand_id = _row[0], _row[1]
+                    if not (_app_id and _cand_id):
+                        continue
+                    try:
+                        _lock_history_on_placement(_bf_s, _cand_id, _app_id)
+                    except Exception:
+                        current_app.logger.exception(
+                            "Req 32 backfill: lock+snapshot failed for app %s", _app_id
+                        )
+                _bf_s.commit()
+        except Exception:
+            current_app.logger.exception("Req 32 placement backfill loop failed")
 
         # Leave request columns — model was updated from the original
         for _lr_col in [
@@ -27567,10 +27776,40 @@ def candidate_profile(cand_id: int):
                     "teams_join_url": iv.teams_join_url or "",
                     "app_id": iv.app_id,
                 })
+            # Attach placement snapshots into the matching engagement
+            # bucket so the archive card can render the declaration +
+            # address-history snapshot alongside the vetting / refs /
+            # interview rows for that engagement.
+            try:
+                _snap_rows = _s_arch.scalars(
+                    select(PlacementSnapshot)
+                    .where(PlacementSnapshot.candidate_id == cand_id)
+                    .order_by(PlacementSnapshot.snapshotted_at.desc())
+                ).all()
+                for _snap in _snap_rows:
+                    if current_eng_id and _snap.engagement_id == current_eng_id:
+                        continue  # current engagement isn't archived
+                    k = _snap.engagement_id
+                    bucket = _arch_buckets.setdefault(
+                        k, {"vetting": [], "refs": [], "interviews": []}
+                    )
+                    bucket.setdefault("snapshots", []).append({
+                        "id": _snap.id,
+                        "snapshotted_at": _snap.snapshotted_at,
+                        "payload": json.loads(_snap.payload or "{}"),
+                    })
+            except Exception:
+                current_app.logger.exception(
+                    "archived_engagements: snapshot attach failed for cand %s", cand_id
+                )
+
             # Resolve engagement metadata + sort newest-first by last_seen.
             for eng_id, bucket in _arch_buckets.items():
                 # Skip empty buckets (e.g. only had N/A rows that we filtered).
-                if not (bucket["vetting"] or bucket["refs"] or bucket["interviews"]):
+                if not (
+                    bucket["vetting"] or bucket["refs"]
+                    or bucket["interviews"] or bucket.get("snapshots")
+                ):
                     continue
                 eng_row = _s_arch.get(Engagement, eng_id) if eng_id else None
                 all_dates = [
@@ -27581,6 +27820,7 @@ def candidate_profile(cand_id: int):
                         + [rr.received_at for rr in bucket["refs"]]
                         + [iv["scheduled_at"] for iv in bucket["interviews"]]
                         + [iv["completed_at"] for iv in bucket["interviews"]]
+                        + [snap["snapshotted_at"] for snap in bucket.get("snapshots", [])]
                     ) if d is not None
                 ]
                 first_seen = min(all_dates) if all_dates else None
@@ -27594,6 +27834,7 @@ def candidate_profile(cand_id: int):
                     "vetting": bucket["vetting"],
                     "refs": bucket["refs"],
                     "interviews": bucket["interviews"],
+                    "snapshots": bucket.get("snapshots", []),
                     "first_seen": first_seen,
                     "last_seen": last_seen,
                 })

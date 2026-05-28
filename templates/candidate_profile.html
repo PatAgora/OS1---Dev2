@@ -2838,7 +2838,105 @@
                   </tbody>
                 </table>
                 {% endif %}
-                {% if not bucket.vetting and not bucket.refs and not bucket.interviews %}
+                {% if bucket.snapshots %}
+                <h6 class="text-uppercase text-muted small mb-2">Placement snapshot</h6>
+                {% for snap in bucket.snapshots %}
+                <div class="border rounded p-2 mb-2 bg-white">
+                  <div class="small text-muted mb-2">
+                    <i class="fas fa-camera me-1"></i>
+                    Captured {{ snap.snapshotted_at.strftime('%d %b %Y at %H:%M') if snap.snapshotted_at else '' }}
+                  </div>
+                  {% set dec = snap.payload.declarations or {} %}
+                  <table class="table table-sm mb-2">
+                    <tbody>
+                      <tr>
+                        <th style="width:40%;">Employment Reference Declaration</th>
+                        <td>
+                          {% if dec.employment_ref_signed %}
+                            <span class="badge bg-success">Signed</span>
+                            {% if dec.employment_ref_signed_at %}<span class="small text-muted ms-2">{{ dec.employment_ref_signed_at[:10] }}</span>{% endif %}
+                          {% else %}
+                            <span class="badge bg-secondary">Not signed at placement</span>
+                          {% endif %}
+                        </td>
+                      </tr>
+                      <tr>
+                        <th>Secondary Job Declaration</th>
+                        <td>
+                          {% if dec.secondary_job_signed %}
+                            <span class="badge bg-success">Signed</span>
+                            {% if dec.secondary_job_signed_at %}<span class="small text-muted ms-2">{{ dec.secondary_job_signed_at[:10] }}</span>{% endif %}
+                            {% if dec.secondary_job_has_secondary %}
+                              <div class="small text-muted mt-1">Has secondary: {{ dec.secondary_job_title or '—' }}</div>
+                            {% endif %}
+                          {% else %}
+                            <span class="badge bg-secondary">Not signed at placement</span>
+                          {% endif %}
+                        </td>
+                      </tr>
+                      <tr>
+                        <th>Conduct Regulations decision</th>
+                        <td>
+                          {% if dec.conduct_regs_opted_in is none %}
+                            <span class="badge bg-secondary">Not decided at placement</span>
+                          {% elif dec.conduct_regs_opted_in %}
+                            <span class="badge bg-success">Opted in</span>
+                          {% else %}
+                            <span class="badge bg-info">Opted out</span>
+                          {% endif %}
+                          {% if dec.conduct_regs_decision_at %}<span class="small text-muted ms-2">{{ dec.conduct_regs_decision_at[:10] }}</span>{% endif %}
+                        </td>
+                      </tr>
+                      <tr>
+                        <th>Umbrella assignment</th>
+                        <td>
+                          {% if dec.umbrella_assignment_signed %}
+                            <span class="badge bg-success">Signed</span>
+                            {% if dec.umbrella_assignment_signed_at %}<span class="small text-muted ms-2">{{ dec.umbrella_assignment_signed_at[:10] }}</span>{% endif %}
+                          {% elif dec.umbrella_assignment_sent %}
+                            <span class="badge bg-warning">Sent — awaiting</span>
+                            {% if dec.umbrella_assignment_sent_at %}<span class="small text-muted ms-2">{{ dec.umbrella_assignment_sent_at[:10] }}</span>{% endif %}
+                          {% else %}
+                            <span class="badge bg-secondary">Not sent at placement</span>
+                          {% endif %}
+                        </td>
+                      </tr>
+                      <tr>
+                        <th>HMRC Employment Record</th>
+                        <td>
+                          {% if dec.hmrc_record_uploaded_at %}
+                            <span class="badge bg-success">Uploaded</span>
+                            <span class="small text-muted ms-2">{{ dec.hmrc_record_uploaded_at[:10] }}</span>
+                          {% else %}
+                            <span class="badge bg-secondary">Not uploaded at placement</span>
+                          {% endif %}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  {% if snap.payload.address_history and snap.payload.address_history|length %}
+                  <div class="mt-2">
+                    <div class="small text-muted mb-1">Address history at placement</div>
+                    <table class="table table-sm table-borderless mb-0">
+                      <tbody>
+                        {% for ah in snap.payload.address_history %}
+                        <tr>
+                          <td class="small">
+                            {{ ah.address_line1 }}{% if ah.address_line2 %}, {{ ah.address_line2 }}{% endif %}{% if ah.city %}, {{ ah.city }}{% endif %} {{ ah.postcode }}
+                          </td>
+                          <td class="small text-muted text-end">
+                            {{ ah.from_date[:10] if ah.from_date else '' }} — {{ ah.to_date[:10] if ah.to_date else 'present' }}
+                          </td>
+                        </tr>
+                        {% endfor %}
+                      </tbody>
+                    </table>
+                  </div>
+                  {% endif %}
+                </div>
+                {% endfor %}
+                {% endif %}
+                {% if not bucket.vetting and not bucket.refs and not bucket.interviews and not bucket.snapshots %}
                 <p class="text-muted small mb-0">No archived rows.</p>
                 {% endif %}
               </div>
