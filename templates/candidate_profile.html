@@ -1060,6 +1060,9 @@
                     {% else %}
                       {{ emp.company or '—' }}
                     {% endif %}
+                    {% if emp.locked %}
+                      <i class="fas fa-lock text-muted ms-1" title="Captured in a previous placement{% if emp.locked_at %} on {{ emp.locked_at.strftime('%d %b %Y') }}{% endif %}. The associate can still update this entry on their portal; the original is preserved in the placement snapshot." style="font-size:0.65rem;"></i>
+                    {% endif %}
                   </td>
                   <td style="padding:0.35rem 0.6rem;">{{ emp.role if not emp.is_gap else '—' }}</td>
                   <td style="padding:0.35rem 0.6rem;">

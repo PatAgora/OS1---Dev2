@@ -26720,11 +26720,16 @@ def candidate_profile(cand_id: int):
                 pass
 
         # === Employment History Timeline (for Declarations tile) ===
+        # Req 32 — surface locked_at on each row as an OS1-only marker
+        # so staff can see "this entry was part of a previous placement
+        # on DD MMM YYYY". The portal stays fully editable; this flag is
+        # display-only and does NOT block any edit/delete actions.
         emp_timeline = []
         try:
             _emp_rows = s.execute(text(
                 "SELECT company_name, job_title, start_date, end_date, is_gap, gap_reason, "
-                "permission_to_request, permission_delay_reason, gap_evidence_doc_id "
+                "permission_to_request, permission_delay_reason, gap_evidence_doc_id, "
+                "locked, locked_at, locked_by_application_id "
                 "FROM employment_history WHERE candidate_id = :cid ORDER BY start_date DESC"
             ).bindparams(cid=cand_id)).all()
 
@@ -26752,6 +26757,9 @@ def candidate_profile(cand_id: int):
                     "can_contact": bool(_er[6]) if _er[6] is not None else True,
                     "no_contact_reason": _er[7] or "",
                     "gap_evidence": ev,
+                    "locked": bool(_er[9]) if _er[9] is not None else False,
+                    "locked_at": _er[10],
+                    "locked_by_application_id": _er[11],
                 })
         except Exception:
             pass

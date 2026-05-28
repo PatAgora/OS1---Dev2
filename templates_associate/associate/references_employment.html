@@ -262,18 +262,12 @@
                     </p>
                     {% endif %}
                     <div class="timeline-actions mt-2">
-                        {% if entry.locked %}
-                            <span class="badge bg-secondary" style="font-size: 0.7rem;" title="This entry was part of a previous placement and is locked for audit. Add a new entry for any updates.">
-                                <i class="fas fa-lock me-1"></i>Locked &mdash; previous placement
-                            </span>
-                        {% else %}
-                            <button type="button" class="btn btn-sm btn-outline-primary edit-entry-btn" data-entry-id="{{ entry.id }}" data-entry-type="{{ 'gap' if entry.is_gap else 'employment' }}">
-                                <i class="fas fa-edit"></i> Edit
-                            </button>
-                            <button type="button" class="btn btn-sm btn-outline-danger delete-entry-btn" data-entry-id="{{ entry.id }}">
-                                <i class="fas fa-trash"></i> Delete
-                            </button>
-                        {% endif %}
+                        <button type="button" class="btn btn-sm btn-outline-primary edit-entry-btn" data-entry-id="{{ entry.id }}" data-entry-type="{{ 'gap' if entry.is_gap else 'employment' }}">
+                            <i class="fas fa-edit"></i> Edit
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-danger delete-entry-btn" data-entry-id="{{ entry.id }}">
+                            <i class="fas fa-trash"></i> Delete
+                        </button>
                     </div>
                 </div>
             </div>
