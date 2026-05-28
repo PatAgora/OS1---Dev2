@@ -7550,6 +7550,9 @@ def send_interview_email(cand_id: int):
     location = (request.form.get("location") or "Microsoft Teams (link to follow)").strip()
     if to_email and email_body:
         try:
+            # Req 8 — strip the EmailTemplate's hand-typed signature so
+            # send_email's HTML+logo signature isn't duplicated below it.
+            email_body = _strip_template_signature(email_body)
             html_body = "<br>".join(email_body.split("\n"))
             attachments = []
             for f in request.files.getlist("attachments"):
@@ -7603,8 +7606,12 @@ def send_interview_email(cand_id: int):
                 # surface the meeting invite UI based on the first ICS.
                 attachments.insert(0, ("interview.ics", ics_bytes, "text/calendar"))
 
+            # Req 8 — interview emails come from associates@ explicitly so
+            # the signature contact email is associates@ regardless of
+            # whatever SMTP_FROM happens to be on this environment.
             send_email(to_email, email_subject, html_body,
-                       attachments=attachments if attachments else None)
+                       attachments=attachments if attachments else None,
+                       from_email=ASSOCIATES_FROM)
             flash(f"Interview invitation sent to {to_email}.", "success")
         except Exception as exc:
             flash(f"Email failed: {exc}", "warning")
@@ -14648,6 +14655,42 @@ COMPLIANCE_FROM = os.getenv("COMPLIANCE_FROM_EMAIL", "compliance@optimussolution
 # M365; if SendAs permission isn't granted yet the existing fallback in
 # send_email() will retry under the default sender.
 FINANCE_FROM = os.getenv("FINANCE_FROM_EMAIL", "finance@optimussolutions.co.uk")
+# Req 8 — interview / associate-facing emails are sent from associates@.
+# Distinct constant so callers don't have to rely on whatever SMTP_FROM
+# happens to be set to on the running environment (e.g. if Railway flips
+# SMTP_FROM to compliance@ for a one-off, interview signatures shouldn't
+# pick that up).
+ASSOCIATES_FROM = os.getenv("ASSOCIATES_FROM_EMAIL", "associates@optimussolutions.co.uk")
+
+
+def _strip_template_signature(body: str) -> str:
+    """Req 8 — strip a trailing hand-typed signature from a template body
+    so send_email's HTML+logo signature isn't a duplicate.
+
+    Looks for the first occurrence of a common UK sign-off ("Best regards,"
+    "Kind regards," "Many thanks," "Regards," "Yours sincerely,") that's
+    followed by Optimus contact text (the company name, the Shelton Street
+    address, or one of the mailbox addresses) and removes from that point
+    to the end of the body. If the heuristic doesn't match, the body is
+    returned unchanged — fail-open so the email still sends.
+    """
+    if not body:
+        return body
+    import re as _re
+    pattern = _re.compile(
+        r"(?is)(?:<br\s*/?>|<p[^>]*>|\n|\r|\s)*"
+        r"(?:Best\s+regards|Kind\s+regards|Many\s+thanks|Regards|Yours\s+sincerely)\s*,?"
+        r".*?(?:Optimus|optimussolutions\.co\.uk|Shelton\s+Street)"
+    )
+    m = pattern.search(body)
+    if not m:
+        return body
+    stripped = body[:m.start()].rstrip()
+    for _close in ("</p>", "<br/>", "<br>", "<br />"):
+        if stripped.endswith(_close):
+            stripped = stripped[:-len(_close)].rstrip()
+            break
+    return stripped
 
 def send_email(
     to_email,
@@ -14934,6 +14977,37 @@ def update_teams_calendar_event(*, organiser_upn, event_id, attendees,
         "join_url": (data.get("onlineMeeting") or {}).get("joinUrl", ""),
         "web_link": data.get("webLink", ""),
     }
+
+
+def attach_file_to_graph_event(*, organiser_upn, event_id, filename,
+                                content: bytes, content_type: str) -> dict:
+    """Req 8 — attach a file to an existing Graph calendar event so it
+    rides along with the Outlook invite. Uses the simple inline upload
+    path (under ~3MB safe limit on Graph's /events/{id}/attachments
+    fileAttachment endpoint). Raises on HTTP error.
+    """
+    if not M365_GRAPH_ENABLED:
+        raise RuntimeError("M365_GRAPH_ENABLED is off")
+    if not (organiser_upn and event_id and filename):
+        raise RuntimeError("organiser_upn, event_id and filename are required")
+    token = _get_m365_graph_token()
+    from urllib.parse import quote
+    url = (
+        f"https://graph.microsoft.com/v1.0/users/"
+        f"{quote(organiser_upn)}/events/{quote(event_id)}/attachments"
+    )
+    payload = {
+        "@odata.type": "#microsoft.graph.fileAttachment",
+        "name": filename,
+        "contentType": content_type or "application/octet-stream",
+        "contentBytes": base64.b64encode(content).decode("ascii"),
+    }
+    resp = requests.post(url, headers={
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }, json=payload, timeout=60)
+    resp.raise_for_status()
+    return resp.json()
 
 
 def cancel_teams_calendar_event(*, organiser_upn, event_id) -> bool:
@@ -22026,6 +22100,20 @@ def action_schedule_interview(app_id):
         return redirect(url_for("application_detail", app_id=app_id))
     end = start + datetime.timedelta(hours=1)
 
+    # Req 8 — read any files uploaded on the Schedule Interview form so
+    # they ride along with the calendar invite. Previously these were
+    # silently discarded by this route which is why staff reported "only
+    # one attachment works" — the .ics fallback always sent a single
+    # interview.ics line item and the Graph path sent no attachments at
+    # all.
+    uploaded_attachments: List[Tuple[str, bytes, str]] = []
+    for f in request.files.getlist("attachments"):
+        if f and f.filename:
+            uploaded_attachments.append((
+                f.filename, f.read(),
+                f.content_type or "application/octet-stream",
+            ))
+
     # we'll fill these before session closes
     cand_name = ""
     cand_email = ""
@@ -22132,10 +22220,39 @@ def action_schedule_interview(app_id):
             graph_event_id = result.get("event_id") or ""
             teams_join_url = result.get("join_url") or ""
             graph_used = bool(graph_event_id)
+            # Attach uploaded files to the Graph event so the calendar
+            # invite carries them. Tolerates per-file failures so a bad
+            # MIME on one upload doesn't block the whole interview.
+            if graph_event_id and uploaded_attachments:
+                for fname, fbytes, fmime in uploaded_attachments:
+                    try:
+                        attach_file_to_graph_event(
+                            organiser_upn=organiser_upn,
+                            event_id=graph_event_id,
+                            filename=fname,
+                            content=fbytes,
+                            content_type=fmime,
+                        )
+                    except Exception as att_exc:
+                        current_app.logger.warning(
+                            "Graph: attach %s to event %s failed: %s",
+                            fname, graph_event_id, att_exc,
+                        )
         except Exception as exc:
+            err_str = str(exc)
             current_app.logger.warning(
                 "Graph calendar create/update failed for app %s: %s — falling back to .ics",
                 app_id, exc,
+            )
+            # Surface the reason to staff so env-config issues
+            # (M365_GRAPH_ENABLED=0, missing OnlineMeetings.ReadWrite.All
+            # admin consent, organiser_upn not a real Optimus mailbox,
+            # ApplicationAccessPolicy not scoped) are visible without
+            # tailing Railway logs.
+            flash(
+                "Teams meeting could not be auto-created — falling back to "
+                f".ics calendar attachment. Reason: {err_str[:200]}",
+                "warning",
             )
 
     # Persist Graph metadata + decide whether to send the legacy .ics email.
@@ -22163,21 +22280,29 @@ def action_schedule_interview(app_id):
         cand_email,
     )
 
+    cand_attachments = [("interview.ics", ics_bytes, "text/calendar")] + list(uploaded_attachments)
     send_email(
         cand_email,
         summary,
         f"<p>Hi {cand_name}, your interview is scheduled for {start}.</p>",
-        attachments=[("interview.ics", ics_bytes, "text/calendar")],
+        attachments=cand_attachments,
+        from_email=ASSOCIATES_FROM,
     )
 
     send_email(
         interviewer_email,
         summary,
         f"<p>Interview scheduled with {cand_name} for {start}.</p>",
-        attachments=[("interview.ics", ics_bytes, "text/calendar")],
+        attachments=cand_attachments,
+        from_email=ASSOCIATES_FROM,
     )
 
-    flash("Interview scheduled and invites sent (.ics attached).", "success")
+    flash(
+        "Interview scheduled and invites sent (.ics attached"
+        + (f", {len(uploaded_attachments)} extra file(s) included" if uploaded_attachments else "")
+        + ").",
+        "success",
+    )
     return redirect(url_for("application_detail", app_id=app_id))
 
 # Req 9 — Interview outcome model.
