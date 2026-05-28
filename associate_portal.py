@@ -1578,7 +1578,32 @@ def personal_details():
             cv_document = None
             if Document:
                 cv_document = s.query(Document).filter_by(candidate_id=cand_id, doc_type="cv").first()
-            return render_template("associate/personal_details.html", associate=cand, profile=profile, employment_company=employment_company, cv_document=cv_document)
+            # Req: 5-year address history captured on Personal Details.
+            # Pull the current address's move-in date + every previous
+            # address (is_current=False) so the template can render the
+            # repeating rows.
+            AddressHistory = _portal_model("AddressHistory")
+            current_address_from_iso = ""
+            previous_addresses = []
+            if AddressHistory:
+                _cur = s.query(AddressHistory).filter_by(
+                    candidate_id=cand_id, is_current=True
+                ).first()
+                if _cur and _cur.from_date:
+                    current_address_from_iso = _cur.from_date.strftime("%Y-%m-%d")
+                previous_addresses = s.query(AddressHistory).filter(
+                    AddressHistory.candidate_id == cand_id,
+                    AddressHistory.is_current == False,  # noqa: E712
+                ).order_by(AddressHistory.to_date.desc().nullslast()).all()
+            return render_template(
+                "associate/personal_details.html",
+                associate=cand, profile=profile,
+                employment_company=employment_company,
+                cv_document=cv_document,
+                current_address_from_iso=current_address_from_iso,
+                previous_addresses=previous_addresses,
+                today_iso=date.today().strftime("%Y-%m-%d"),
+            )
 
     # POST
     with SASession(engine) as s:
@@ -1656,6 +1681,72 @@ def personal_details():
             # contact_current_employer saved on Candidate model (line above), not profile
             profile.unsubscribed = request.form.get("unsubscribed") == "1"
 
+        # Req: sync AddressHistory from the Personal Details form so the
+        # candidate-profile Address History tile reflects the same data
+        # the associate sees. Wipes existing rows and re-inserts from
+        # the submitted form fields (current address + repeating
+        # prev_address_* fields).
+        AddressHistory = _portal_model("AddressHistory")
+        coverage_months = 0
+        if AddressHistory:
+            try:
+                # Wipe existing rows so the form is the single source of
+                # truth. Counts are recomputed on the fresh rows below
+                # before flashing the 5-year-coverage warning.
+                s.query(AddressHistory).filter_by(candidate_id=cand_id).delete()
+                _current_from = _parse_date(request.form.get("current_address_from", ""))
+                if _current_from:
+                    s.add(AddressHistory(
+                        candidate_id=cand_id,
+                        address_line1=profile.address_line1 if profile else "",
+                        address_line2=profile.address_line2 if profile else "",
+                        city=profile.city if profile else "",
+                        postcode=profile.postcode if profile else "",
+                        country=profile.country if profile else "United Kingdom",
+                        from_date=_current_from,
+                        to_date=None,
+                        is_current=True,
+                    ))
+                    today = date.today()
+                    coverage_months += max(
+                        0,
+                        (today.year - _current_from.year) * 12 + (today.month - _current_from.month),
+                    )
+
+                prev_lines1 = request.form.getlist("prev_address_line1")
+                prev_lines2 = request.form.getlist("prev_address_line2")
+                prev_cities = request.form.getlist("prev_city")
+                prev_postcodes = request.form.getlist("prev_postcode")
+                prev_countries = request.form.getlist("prev_country")
+                prev_froms = request.form.getlist("prev_from_date")
+                prev_tos = request.form.getlist("prev_to_date")
+                for i in range(len(prev_lines1)):
+                    _line1 = (prev_lines1[i] if i < len(prev_lines1) else "").strip()
+                    if not _line1:
+                        continue
+                    _from = _parse_date(prev_froms[i] if i < len(prev_froms) else "")
+                    _to = _parse_date(prev_tos[i] if i < len(prev_tos) else "")
+                    s.add(AddressHistory(
+                        candidate_id=cand_id,
+                        address_line1=_line1,
+                        address_line2=(prev_lines2[i] if i < len(prev_lines2) else "") or "",
+                        city=(prev_cities[i] if i < len(prev_cities) else "") or "",
+                        postcode=(prev_postcodes[i] if i < len(prev_postcodes) else "") or "",
+                        country=(prev_countries[i] if i < len(prev_countries) else "United Kingdom") or "United Kingdom",
+                        from_date=_from,
+                        to_date=_to,
+                        is_current=False,
+                    ))
+                    if _from and _to:
+                        coverage_months += max(
+                            0,
+                            (_to.year - _from.year) * 12 + (_to.month - _from.month),
+                        )
+            except Exception:
+                current_app.logger.exception(
+                    "personal_details: AddressHistory sync failed for cand %s", cand_id
+                )
+
         _add_note(s, cand_id, "Personal details updated via Associate Portal.")
         try:
             s.commit()
@@ -1680,7 +1771,18 @@ def personal_details():
             flash(f"Failed to save personal details. Please try again.", "danger")
             return redirect(url_for("associate.personal_details"))
 
-    flash("Personal details saved.", "success")
+    if AddressHistory:
+        if coverage_months >= 60:
+            flash("Personal details saved.", "success")
+        else:
+            flash(
+                f"Personal details saved. Address history covers {coverage_months} months — "
+                f"we still need {60 - coverage_months} months to reach the 5-year minimum. "
+                f"Please add another previous address.",
+                "warning",
+            )
+    else:
+        flash("Personal details saved.", "success")
     return redirect(url_for("associate.personal_details"))
 
 

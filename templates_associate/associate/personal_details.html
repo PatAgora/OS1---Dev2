@@ -119,6 +119,11 @@
                     <label class="form-label" for="country">Country</label>
                     <input type="text" id="country" name="country" class="form-control" value="{{ profile.country if profile and profile.country else 'United Kingdom' }}">
                 </div>
+                <div class="col-md-4">
+                    <label class="form-label" for="current_address_from">Date you moved in <span class="text-danger">*</span></label>
+                    <input type="date" id="current_address_from" name="current_address_from" class="form-control" value="{{ current_address_from_iso or '' }}" required max="{{ today_iso }}">
+                    <small class="text-muted">Required for DBS / Credit checks — we need 5 years of address history.</small>
+                </div>
                 <div class="col-md-12">
                     {% if associate and associate.needs_scotland_address_confirmation %}
                     <div class="alert alert-warning d-flex align-items-start py-2" role="alert" style="font-size: 0.875rem;">
@@ -147,8 +152,164 @@
                     <small class="text-muted">This determines which criminal-record (DBS) check is requested for your background screening.</small>
                 </div>
             </div>
+
+            {# 5-year address history block — only the rows BEFORE the current address. #}
+            <div class="mt-4">
+                <div class="d-flex justify-content-between align-items-baseline">
+                    <h5 class="mb-1"><i class="fas fa-history me-2 text-primary"></i>Previous addresses</h5>
+                    <span id="addressCoverageBadge" class="badge bg-secondary">0 / 60 months covered</span>
+                </div>
+                <p class="small text-muted mb-3">
+                    Add every address you lived at before this one, going back at least 5 years (60 months in total).
+                    The form will warn you when you have enough coverage.
+                </p>
+                <div id="prevAddressList">
+                    {% for pa in previous_addresses %}
+                    <div class="card mb-2 prev-address-row">
+                        <div class="card-body py-3">
+                            <div class="row g-2">
+                                <div class="col-md-6">
+                                    <label class="form-label small">Address line 1</label>
+                                    <input type="text" name="prev_address_line1" class="form-control form-control-sm" value="{{ pa.address_line1 or '' }}">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label small">Address line 2</label>
+                                    <input type="text" name="prev_address_line2" class="form-control form-control-sm" value="{{ pa.address_line2 or '' }}">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label small">City</label>
+                                    <input type="text" name="prev_city" class="form-control form-control-sm" value="{{ pa.city or '' }}">
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label small">Postcode</label>
+                                    <input type="text" name="prev_postcode" class="form-control form-control-sm" value="{{ pa.postcode or '' }}">
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label small">Country</label>
+                                    <input type="text" name="prev_country" class="form-control form-control-sm" value="{{ pa.country or 'United Kingdom' }}">
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label small">From</label>
+                                    <input type="date" name="prev_from_date" class="form-control form-control-sm prev-from" value="{{ pa.from_date.strftime('%Y-%m-%d') if pa.from_date else '' }}">
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label small">To</label>
+                                    <input type="date" name="prev_to_date" class="form-control form-control-sm prev-to" value="{{ pa.to_date.strftime('%Y-%m-%d') if pa.to_date else '' }}">
+                                </div>
+                            </div>
+                            <div class="mt-2 text-end">
+                                <button type="button" class="btn btn-sm btn-outline-danger remove-prev-address"><i class="fas fa-times"></i> Remove</button>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                <button type="button" id="addPrevAddressBtn" class="btn btn-sm btn-outline-primary">
+                    <i class="fas fa-plus me-1"></i>Add a previous address
+                </button>
+                <div id="addressCoverageWarning" class="alert alert-warning py-2 mt-3 d-none" role="alert" style="font-size: 0.85rem;">
+                    <i class="fas fa-exclamation-triangle me-1"></i>
+                    You need at least 5 years (60 months) of address history. Add another previous address until the coverage badge above turns green.
+                </div>
+            </div>
+            <template id="prevAddressRowTpl">
+                <div class="card mb-2 prev-address-row">
+                    <div class="card-body py-3">
+                        <div class="row g-2">
+                            <div class="col-md-6">
+                                <label class="form-label small">Address line 1</label>
+                                <input type="text" name="prev_address_line1" class="form-control form-control-sm">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label small">Address line 2</label>
+                                <input type="text" name="prev_address_line2" class="form-control form-control-sm">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small">City</label>
+                                <input type="text" name="prev_city" class="form-control form-control-sm">
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label small">Postcode</label>
+                                <input type="text" name="prev_postcode" class="form-control form-control-sm">
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label small">Country</label>
+                                <input type="text" name="prev_country" class="form-control form-control-sm" value="United Kingdom">
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label small">From</label>
+                                <input type="date" name="prev_from_date" class="form-control form-control-sm prev-from">
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label small">To</label>
+                                <input type="date" name="prev_to_date" class="form-control form-control-sm prev-to">
+                            </div>
+                        </div>
+                        <div class="mt-2 text-end">
+                            <button type="button" class="btn btn-sm btn-outline-danger remove-prev-address"><i class="fas fa-times"></i> Remove</button>
+                        </div>
+                    </div>
+                </div>
+            </template>
         </div>
     </div>
+    <script>
+    (function(){
+        const REQUIRED_MONTHS = 60;
+        const currentFromInput = document.getElementById('current_address_from');
+        const prevList = document.getElementById('prevAddressList');
+        const tpl = document.getElementById('prevAddressRowTpl');
+        const addBtn = document.getElementById('addPrevAddressBtn');
+        const badge = document.getElementById('addressCoverageBadge');
+        const warning = document.getElementById('addressCoverageWarning');
+        function monthsBetween(a, b){
+            if (!a || !b) return 0;
+            const da = new Date(a), db = new Date(b);
+            if (isNaN(da) || isNaN(db)) return 0;
+            return Math.max(0, (db.getFullYear()-da.getFullYear())*12 + (db.getMonth()-da.getMonth()));
+        }
+        function recomputeCoverage(){
+            const today = new Date();
+            let total = 0;
+            if (currentFromInput && currentFromInput.value){
+                total += monthsBetween(currentFromInput.value, today.toISOString().slice(0,10));
+            }
+            document.querySelectorAll('.prev-address-row').forEach(function(row){
+                const from = row.querySelector('.prev-from').value;
+                const to   = row.querySelector('.prev-to').value;
+                total += monthsBetween(from, to);
+            });
+            badge.textContent = total + ' / ' + REQUIRED_MONTHS + ' months covered';
+            if (total >= REQUIRED_MONTHS){
+                badge.classList.remove('bg-secondary','bg-warning'); badge.classList.add('bg-success');
+                warning.classList.add('d-none');
+            } else {
+                badge.classList.remove('bg-success'); badge.classList.add(total > 0 ? 'bg-warning' : 'bg-secondary');
+                warning.classList.remove('d-none');
+            }
+        }
+        function attachRowListeners(row){
+            row.querySelectorAll('input').forEach(function(i){ i.addEventListener('change', recomputeCoverage); });
+            row.querySelector('.remove-prev-address').addEventListener('click', function(){
+                row.remove();
+                recomputeCoverage();
+            });
+        }
+        if (addBtn){
+            addBtn.addEventListener('click', function(){
+                const node = tpl.content.firstElementChild.cloneNode(true);
+                prevList.appendChild(node);
+                attachRowListeners(node);
+                recomputeCoverage();
+            });
+        }
+        document.querySelectorAll('.prev-address-row').forEach(attachRowListeners);
+        if (currentFromInput){
+            currentFromInput.addEventListener('change', recomputeCoverage);
+        }
+        recomputeCoverage();
+    })();
+    </script>
 
     <!-- Date of Birth -->
     <div class="portal-card mb-4">
