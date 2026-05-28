@@ -22801,6 +22801,33 @@ def start_vetting_with_email(cand_id):
                 "References", "Qualifications", "Professional Registration",
                 "Credit Check", "Directorship / Disqualification", "Sanctions / PEP", "Social Media Review"
             ]
+
+            # Honour the engagement's vetting_requirements when present —
+            # the same pattern api_vetting_trigger uses. Without this the
+            # Verifile submission included every default check (Sanctions,
+            # Social Media etc.) even when the engagement only wanted a
+            # subset, which is what the user saw: OS1 displaying 5
+            # required checks but Verifile processing 6.
+            checks_to_trigger = DEFAULT_VETTING_CHECKS
+            try:
+                appn = s.scalar(
+                    select(Application)
+                    .where(Application.candidate_id == cand_id)
+                    .order_by(Application.created_at.desc())
+                )
+                if appn and appn.job_id:
+                    _job = s.get(Job, appn.job_id)
+                    if _job and _job.engagement_id:
+                        _eng = s.get(Engagement, _job.engagement_id)
+                        if _eng and _eng.vetting_requirements:
+                            _eng_checks = json.loads(_eng.vetting_requirements)
+                            if isinstance(_eng_checks, list) and _eng_checks:
+                                checks_to_trigger = _eng_checks
+            except Exception:
+                current_app.logger.exception(
+                    "start-vetting: engagement requirements lookup failed for cand %s", cand_id
+                )
+
             existing = {
                 vc.check_type: vc
                 for vc in s.scalars(select(VettingCheck).where(VettingCheck.candidate_id == cand_id)).all()
@@ -22808,6 +22835,21 @@ def start_vetting_with_email(cand_id):
             now = datetime.datetime.utcnow()
             created = 0
             for ct in DEFAULT_VETTING_CHECKS:
+                # Checks NOT required by the engagement get N/A so they
+                # never reach Verifile and don't clutter the OS1 tile.
+                if ct not in checks_to_trigger:
+                    if ct in existing:
+                        if (existing[ct].status or "NOT STARTED").upper() == "NOT STARTED":
+                            existing[ct].status = "N/A"
+                            existing[ct].notes = "Not required for this engagement"
+                            existing[ct].completed_at = now
+                    else:
+                        s.add(VettingCheck(
+                            candidate_id=cand_id, check_type=ct, status="N/A",
+                            notes="Not required for this engagement",
+                            completed_at=now,
+                        ))
+                    continue
                 if ct in existing:
                     if (existing[ct].status or "NOT STARTED").upper() == "NOT STARTED":
                         existing[ct].status = "In Progress"
@@ -22824,10 +22866,14 @@ def start_vetting_with_email(cand_id):
             ))
             s.commit()
 
-            # Submit to Verifile in background
+            # Submit to Verifile in background — only the engagement-
+            # required subset, not the full default list. Manual checks
+            # (References, Qualifications, Professional Registration,
+            # Directorship) are still filtered out at the API layer by
+            # VERIFILE_CHECK_MAP membership.
             if VERIFILE_APIM_KEY:
                 try:
-                    verifile_submit_all_checks(cand_id, cand.name, cand.email, DEFAULT_VETTING_CHECKS, s)
+                    verifile_submit_all_checks(cand_id, cand.name, cand.email, checks_to_trigger, s)
                     s.commit()
                 except Exception as ve:
                     print(f"[VETTING] Verifile submit failed: {ve}", flush=True)
