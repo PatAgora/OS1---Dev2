@@ -2729,6 +2729,102 @@
     </div>
   </div>
 
+  {# Req 32 — Archive tab: prior-engagement vetting + references, read-only. #}
+  {% if archived_engagements %}
+  <div class="row g-5">
+    <div class="col-12">
+      <div class="modern-card mb-4 fade-in-up stagger-3" id="sec-archive">
+        <div class="card-body p-4">
+          <div class="section-header mb-3 d-flex align-items-center" style="cursor:pointer;" onclick="this.parentElement.querySelector('.archive-body').classList.toggle('d-none');this.querySelector('i.toggle').classList.toggle('fa-chevron-down');this.querySelector('i.toggle').classList.toggle('fa-chevron-right');">
+            <div class="section-title mb-0">
+              <i class="fas fa-archive"></i>
+              Archive — Previous Engagements
+              <span class="badge bg-secondary ms-2">{{ archived_engagements|length }}</span>
+            </div>
+            <i class="fas fa-chevron-right toggle ms-auto text-muted"></i>
+          </div>
+          <div class="archive-body d-none">
+            <p class="text-muted small mb-3">
+              Vetting checks and reference requests from prior engagements are listed here read-only. They do not affect the current engagement's tile above. In-date checks are auto-carried forward as <em>CHECK STILL IN DATE</em> on the current engagement.
+            </p>
+            {% for bucket in archived_engagements %}
+            <div class="card mb-3 shadow-sm">
+              <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                <div>
+                  <strong>{{ bucket.engagement_ref or 'Unassociated' }}</strong>
+                  {% if bucket.engagement_name and bucket.engagement_name != bucket.engagement_ref %}
+                    &mdash; {{ bucket.engagement_name }}
+                  {% endif %}
+                </div>
+                <div class="text-muted small">
+                  {% if bucket.first_seen %}{{ bucket.first_seen.strftime('%d %b %Y') }}{% endif %}
+                  {% if bucket.first_seen and bucket.last_seen and bucket.first_seen != bucket.last_seen %}
+                    &mdash; {{ bucket.last_seen.strftime('%d %b %Y') }}
+                  {% endif %}
+                </div>
+              </div>
+              <div class="card-body">
+                {% if bucket.vetting %}
+                <h6 class="text-uppercase text-muted small mb-2">Vetting Checks</h6>
+                <table class="table table-sm mb-3">
+                  <thead><tr><th>Check</th><th>Status</th><th>Completed</th><th>Notes</th></tr></thead>
+                  <tbody>
+                    {% for vc in bucket.vetting %}
+                    <tr>
+                      <td>{{ vc.check_type }}</td>
+                      <td>
+                        <span class="badge bg-{% if (vc.status or '')|upper == 'COMPLETE' %}success{% elif (vc.status or '')|upper == 'CHECK STILL IN DATE' %}info{% elif (vc.status or '')|upper == 'FAILED' %}danger{% elif (vc.status or '')|upper == 'N/A' %}secondary{% else %}warning{% endif %}">
+                          {{ vc.status or 'NOT STARTED' }}
+                        </span>
+                      </td>
+                      <td class="small">{% if vc.completed_at %}{{ vc.completed_at.strftime('%d %b %Y') }}{% endif %}</td>
+                      <td class="small text-muted">{{ vc.notes or '' }}</td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+                {% endif %}
+                {% if bucket.refs %}
+                <h6 class="text-uppercase text-muted small mb-2">Reference Requests</h6>
+                <table class="table table-sm mb-0">
+                  <thead><tr><th>Company</th><th>Referee</th><th>Status</th><th>Sent</th><th>Received</th><th>Reply</th></tr></thead>
+                  <tbody>
+                    {% for rr in bucket.refs %}
+                    <tr>
+                      <td>{{ rr.company_name or '' }}</td>
+                      <td class="small">{{ rr.referee_name or '' }}{% if rr.referee_email %} &lt;{{ rr.referee_email }}&gt;{% endif %}</td>
+                      <td>
+                        <span class="badge bg-{% if rr.status == 'received' %}success{% elif rr.status == 'flagged' %}danger{% elif rr.status == 'sent' %}info{% else %}secondary{% endif %}">
+                          {{ rr.status or 'not_sent' }}
+                        </span>
+                      </td>
+                      <td class="small">{% if rr.sent_at %}{{ rr.sent_at.strftime('%d %b %Y') }}{% endif %}</td>
+                      <td class="small">{% if rr.received_at %}{{ rr.received_at.strftime('%d %b %Y') }}{% endif %}</td>
+                      <td class="small">
+                        {% if rr.reply_doc_id %}
+                          <a href="{{ url_for('download_document', doc_id=rr.reply_doc_id) }}" class="text-decoration-none">
+                            <i class="fas fa-file-download"></i> Reply
+                          </a>
+                        {% endif %}
+                      </td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+                {% endif %}
+                {% if not bucket.vetting and not bucket.refs %}
+                <p class="text-muted small mb-0">No archived rows.</p>
+                {% endif %}
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
   <div class="row g-5">
     <div class="col-12">
       <!-- Activity Feed Card -->

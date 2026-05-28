@@ -3516,6 +3516,121 @@ def _vat_band_label(treatment: str) -> str:
     }.get(treatment, f"Expenses ({treatment})")
 
 
+def _current_engagement_id(session, candidate_id):
+    """Req 32 — return the engagement_id from the candidate's latest
+    application that has an engagement-linked job. Used to scope
+    VettingCheck + ReferenceRequest rows on the candidate profile and
+    when stamping new rows so re-applications get a fresh page. Returns
+    None when the candidate has no engagement-linked application.
+    """
+    if not (session and candidate_id):
+        return None
+    try:
+        row = session.execute(text("""
+            SELECT j.engagement_id
+            FROM applications a
+            JOIN jobs j ON j.id = a.job_id
+            WHERE a.candidate_id = :cid
+              AND j.engagement_id IS NOT NULL
+            ORDER BY a.created_at DESC
+            LIMIT 1
+        """), {"cid": candidate_id}).first()
+        return row[0] if row else None
+    except Exception:
+        return None
+
+
+# Fallback expiry windows mirrored from the candidate-profile view so
+# _maybe_seed_carryover_checks can decide carry-over without needing the
+# DB config row resolved at every call site. Real config (if customised
+# via VettingExpiryConfig) is consulted inside the helper.
+_REQ32_DEFAULT_EXPIRY = {
+    "Right to Work": 12, "Identity Verification": 36,
+    "DBS Check": 12, "References": 36,
+    "Qualifications": 0, "Professional Registration": 12,
+    "Credit Check": 12, "Directorship / Disqualification": 12,
+    "Sanctions / PEP": 12, "Social Media Review": 6,
+}
+
+
+def _load_expiry_months(session) -> dict:
+    """Merge the DB-side VettingExpiryConfig (if present) onto the
+    defaults. Safe-fallback to the defaults if the row / JSON is bad."""
+    out = dict(_REQ32_DEFAULT_EXPIRY)
+    try:
+        row = session.scalar(select(VettingExpiryConfig))
+        if row and row.config:
+            data = json.loads(row.config or "{}")
+            if isinstance(data, dict):
+                out.update({k: int(v) for k, v in data.items() if v not in (None, "")})
+    except Exception:
+        pass
+    return out
+
+
+def _maybe_seed_carryover_checks(session, candidate_id, current_eng_id,
+                                  checks_required, existing_map):
+    """Req 32 — when a new engagement starts, seed each required check
+    that's missing from the current engagement with a prior-engagement
+    Complete row IF that row is still in date per CHECK_EXPIRY_MONTHS.
+    Seeded rows land with status='CHECK STILL IN DATE' so Verifile's
+    existing skip rule prevents re-ordering and staff see the carry-over
+    note alongside the original completed_at.
+    """
+    if not (candidate_id and current_eng_id and checks_required):
+        return
+    expiry = _load_expiry_months(session)
+    now = datetime.datetime.utcnow()
+    for ct in checks_required:
+        if ct in existing_map:
+            continue
+        months = int(expiry.get(ct, 12) or 0)
+        if months <= 0:
+            continue  # never expires / not auto-carryable
+        prior = session.scalar(
+            select(VettingCheck)
+            .where(VettingCheck.candidate_id == candidate_id)
+            .where(VettingCheck.check_type == ct)
+            .where(VettingCheck.engagement_id != current_eng_id)
+            .where(func.upper(VettingCheck.status) == "COMPLETE")
+            .where(VettingCheck.completed_at.isnot(None))
+            .order_by(VettingCheck.completed_at.desc())
+        )
+        if not prior or not prior.completed_at:
+            continue
+        try:
+            from dateutil.relativedelta import relativedelta as _rd
+            still_in_date = (prior.completed_at + _rd(months=months)) > now
+        except Exception:
+            still_in_date = (
+                prior.completed_at + datetime.timedelta(days=30 * months)
+            ) > now
+        if not still_in_date:
+            continue
+        prior_eng_ref = ""
+        try:
+            if prior.engagement_id:
+                _e = session.get(Engagement, prior.engagement_id)
+                if _e:
+                    prior_eng_ref = (_e.ref or _e.name or "") or ""
+        except Exception:
+            pass
+        carried = VettingCheck(
+            candidate_id=candidate_id,
+            engagement_id=current_eng_id,
+            check_type=ct,
+            status="CHECK STILL IN DATE",
+            completed_at=prior.completed_at,
+            notes=(
+                f"Carried over from engagement {prior_eng_ref or 'previous'} "
+                f"(originally completed "
+                f"{prior.completed_at.strftime('%d %b %Y')})."
+            ),
+        )
+        session.add(carried)
+        existing_map[ct] = carried
+
+
 def _resolve_hirer_name(engagement, session=None) -> str:
     """Req 15 — Hirer Name on the Assignment Schedule must be the
     CLIENT'S name, not the project / engagement name. Resolution order:
@@ -11329,6 +11444,10 @@ class VettingCheck(Base):
     __tablename__ = "vetting_check"
     id = Column(Integer, primary_key=True)
     candidate_id = Column(Integer, ForeignKey("candidates.id"), nullable=False)
+    # Req 32 — engagement-scoped fresh start on re-application. Nullable
+    # so legacy rows survive the backfill phase; new rows are stamped
+    # via _current_engagement_id() at creation time.
+    engagement_id = Column(Integer, ForeignKey("engagements.id"), nullable=True)
     check_type = Column(String(100), nullable=False)
     status = Column(String(50), default="NOT STARTED")  # NOT STARTED, In Progress, Complete, N/A, Failed
     notes = Column(Text, default="")
@@ -11442,6 +11561,9 @@ class ReferenceRequest(Base):
     __tablename__ = "reference_requests"
     id = Column(Integer, primary_key=True)
     candidate_id = Column(Integer, ForeignKey("candidates.id"), nullable=False)
+    # Req 32 — engagement-scoped fresh start on re-application. Nullable
+    # so legacy rows survive the backfill phase.
+    engagement_id = Column(Integer, ForeignKey("engagements.id"), nullable=True)
     employment_history_id = Column(Integer, nullable=True)  # Links to portal EmploymentHistory
     company_name = Column(String(300), default="")
     referee_email = Column(String(300), default="")
@@ -12619,6 +12741,9 @@ try:
             "ALTER TABLE vetting_check ADD COLUMN verifile_confirmed BOOLEAN DEFAULT FALSE",
             "ALTER TABLE vetting_check ADD COLUMN verifile_confirmed_at TIMESTAMP",
             "ALTER TABLE vetting_check ADD COLUMN verifile_result VARCHAR(50)",
+            # Req 32 — engagement-scoped fresh start on re-application.
+            "ALTER TABLE vetting_check ADD COLUMN engagement_id INTEGER REFERENCES engagements(id)",
+            "ALTER TABLE reference_requests ADD COLUMN engagement_id INTEGER REFERENCES engagements(id)",
             "ALTER TABLE esign_requests ADD COLUMN candidate_id INTEGER REFERENCES candidates(id)",
             "ALTER TABLE esign_requests ADD COLUMN engagement_id INTEGER REFERENCES engagements(id)",
             "ALTER TABLE esign_requests ADD COLUMN signing_url VARCHAR(500)",
@@ -12702,6 +12827,46 @@ Optimus Compliance Team"""))
                     ORDER BY e.id, a.created_at DESC
                 ) sub
                 WHERE esign_requests.id = sub.esig_id
+            """))
+        except Exception:
+            pass
+
+        # Req 32 — Backfill VettingCheck.engagement_id and
+        # ReferenceRequest.engagement_id. We use the EARLIEST application
+        # with an engagement-linked job so historical rows land on the
+        # historical engagement (the auto-carry logic will then correctly
+        # decide whether they're still in date when a NEW engagement
+        # starts). Idempotent: only touches rows whose engagement_id is
+        # currently NULL.
+        try:
+            _mc.execute(text("""
+                UPDATE vetting_check SET engagement_id = sub.eng_id
+                FROM (
+                    SELECT DISTINCT ON (vc.id) vc.id AS vc_id, j.engagement_id AS eng_id
+                    FROM vetting_check vc
+                    JOIN applications a ON a.candidate_id = vc.candidate_id
+                    JOIN jobs j ON j.id = a.job_id
+                    WHERE vc.engagement_id IS NULL
+                      AND j.engagement_id IS NOT NULL
+                    ORDER BY vc.id, a.created_at ASC
+                ) sub
+                WHERE vetting_check.id = sub.vc_id
+            """))
+        except Exception:
+            pass
+        try:
+            _mc.execute(text("""
+                UPDATE reference_requests SET engagement_id = sub.eng_id
+                FROM (
+                    SELECT DISTINCT ON (rr.id) rr.id AS rr_id, j.engagement_id AS eng_id
+                    FROM reference_requests rr
+                    JOIN applications a ON a.candidate_id = rr.candidate_id
+                    JOIN jobs j ON j.id = a.job_id
+                    WHERE rr.engagement_id IS NULL
+                      AND j.engagement_id IS NOT NULL
+                    ORDER BY rr.id, a.created_at ASC
+                ) sub
+                WHERE reference_requests.id = sub.rr_id
             """))
         except Exception:
             pass
@@ -21645,6 +21810,14 @@ def verifile_submit_all_checks(candidate_id: int, cand_name: str, cand_email: st
     if not VERIFILE_APIM_KEY:
         return 0
 
+    # Req 32 — resolve the candidate's current engagement_id once so all
+    # VettingCheck lookups below are scoped to it. Without this a
+    # candidate with duplicate rows across engagements would have the
+    # query return whichever row was inserted first — possibly an
+    # archived Complete row — and Verifile submission would skip
+    # incorrectly.
+    _eng_id = _current_engagement_id(session, candidate_id)
+
     # Filter to checks that have a Verifile mapping and aren't already complete
     checks_for_verifile = []
     for ct in checks_to_submit:
@@ -21655,11 +21828,12 @@ def verifile_submit_all_checks(candidate_id: int, cand_name: str, cand_email: st
             select(VettingCheck)
             .where(VettingCheck.candidate_id == candidate_id)
             .where(VettingCheck.check_type == ct)
+            .where(VettingCheck.engagement_id == _eng_id)
         )
         if not vc:
             print(f"[Verifile] Skipping {ct}: no VettingCheck record found")
             continue
-        if vc.status.upper() in ("COMPLETE", "N/A"):
+        if vc.status.upper() in ("COMPLETE", "N/A", "CHECK STILL IN DATE"):
             print(f"[Verifile] Skipping {ct}: status={vc.status}")
             continue
         checks_for_verifile.append(ct)
@@ -21712,6 +21886,7 @@ def verifile_submit_all_checks(candidate_id: int, cand_name: str, cand_email: st
                         select(VettingCheck)
                         .where(VettingCheck.candidate_id == candidate_id)
                         .where(VettingCheck.check_type == check_type)
+                        .where(VettingCheck.engagement_id == _eng_id)
                     )
                     if vc:
                         vc.external_ref = pkg_order_id
@@ -21753,6 +21928,7 @@ def verifile_submit_all_checks(candidate_id: int, cand_name: str, cand_email: st
                     select(VettingCheck)
                     .where(VettingCheck.candidate_id == candidate_id)
                     .where(VettingCheck.check_type == check_type)
+                    .where(VettingCheck.engagement_id == _eng_id)
                 )
                 if vc:
                     vc.status = "Awaiting Associate"
@@ -21847,6 +22023,7 @@ def verifile_submit_all_checks(candidate_id: int, cand_name: str, cand_email: st
                         select(VettingCheck)
                         .where(VettingCheck.candidate_id == candidate_id)
                         .where(VettingCheck.check_type == check_type)
+                        .where(VettingCheck.engagement_id == _eng_id)
                     )
                     if vc:
                         vc.external_ref = client_order_id
@@ -21877,6 +22054,7 @@ def verifile_submit_all_checks(candidate_id: int, cand_name: str, cand_email: st
                     select(VettingCheck)
                     .where(VettingCheck.candidate_id == candidate_id)
                     .where(VettingCheck.check_type == check_type)
+                    .where(VettingCheck.engagement_id == _eng_id)
                 )
                 if vc:
                     vc.external_ref = candidate_order_id
@@ -22672,10 +22850,15 @@ def api_vetting_trigger_referencing(cand_id):
         if not cand:
             return jsonify({"ok": False, "error": "Associate not found"}), 404
 
+        # Req 32 — scope existing-row lookups and new-row creation to the
+        # candidate's current engagement so re-applications start fresh.
+        _eng_id = _current_engagement_id(s, cand_id)
         existing = {
             vc.check_type: vc
             for vc in s.scalars(
-                select(VettingCheck).where(VettingCheck.candidate_id == cand_id)
+                select(VettingCheck)
+                .where(VettingCheck.candidate_id == cand_id)
+                .where(VettingCheck.engagement_id == _eng_id)
             ).all()
         }
 
@@ -22691,6 +22874,7 @@ def api_vetting_trigger_referencing(cand_id):
             else:
                 s.add(VettingCheck(
                     candidate_id=cand_id,
+                    engagement_id=_eng_id,
                     check_type=ct,
                     status="In Progress",
                     created_at=now,
@@ -22723,6 +22907,7 @@ def api_vetting_trigger_referencing(cand_id):
                     existing_ref = s.scalar(
                         select(ReferenceRequest)
                         .where(ReferenceRequest.candidate_id == cand_id)
+                        .where(ReferenceRequest.engagement_id == _eng_id)
                         .where(ReferenceRequest.employment_history_id == emp.id)
                     )
                     if existing_ref:
@@ -22741,6 +22926,7 @@ def api_vetting_trigger_referencing(cand_id):
 
                     ref = ReferenceRequest(
                         candidate_id=cand_id,
+                        engagement_id=_eng_id,
                         employment_history_id=emp.id,
                         company_name=company,
                         referee_email=default_email,
@@ -23101,10 +23287,25 @@ def start_vetting_with_email(cand_id):
                     "start-vetting: engagement/role requirements lookup failed for cand %s", cand_id
                 )
 
+            # Req 32 — scope existing-row lookups and new-row creation to
+            # the candidate's current engagement so re-applications start
+            # fresh.
+            _eng_id = _current_engagement_id(s, cand_id)
             existing = {
                 vc.check_type: vc
-                for vc in s.scalars(select(VettingCheck).where(VettingCheck.candidate_id == cand_id)).all()
+                for vc in s.scalars(
+                    select(VettingCheck)
+                    .where(VettingCheck.candidate_id == cand_id)
+                    .where(VettingCheck.engagement_id == _eng_id)
+                ).all()
             }
+            # Auto-carry: seed in-date Complete checks from a prior
+            # engagement as CHECK STILL IN DATE on this engagement's
+            # tile. Verifile will skip these per its existing rule, and
+            # staff see the carry-over note + original completed_at.
+            _maybe_seed_carryover_checks(
+                s, cand_id, _eng_id, checks_to_trigger, existing,
+            )
             now = datetime.datetime.utcnow()
             created = 0
             for ct in DEFAULT_VETTING_CHECKS:
@@ -23118,7 +23319,9 @@ def start_vetting_with_email(cand_id):
                             existing[ct].completed_at = now
                     else:
                         s.add(VettingCheck(
-                            candidate_id=cand_id, check_type=ct, status="N/A",
+                            candidate_id=cand_id,
+                            engagement_id=_eng_id,
+                            check_type=ct, status="N/A",
                             notes="Not required for this engagement",
                             completed_at=now,
                         ))
@@ -23128,7 +23331,10 @@ def start_vetting_with_email(cand_id):
                         existing[ct].status = "In Progress"
                         created += 1
                 else:
-                    s.add(VettingCheck(candidate_id=cand_id, check_type=ct, status="In Progress"))
+                    s.add(VettingCheck(
+                        candidate_id=cand_id, engagement_id=_eng_id,
+                        check_type=ct, status="In Progress",
+                    ))
                     created += 1
 
             s.add(CandidateNote(
@@ -23223,12 +23429,20 @@ def api_vetting_trigger(cand_id):
             if required:
                 checks_to_trigger = sorted(required)
 
+        # Req 32 — scope to current engagement so re-applications start
+        # fresh + seed auto-carry rows from prior engagements.
+        _eng_id = _current_engagement_id(s, cand_id)
         existing = {
             vc.check_type: vc
             for vc in s.scalars(
-                select(VettingCheck).where(VettingCheck.candidate_id == cand_id)
+                select(VettingCheck)
+                .where(VettingCheck.candidate_id == cand_id)
+                .where(VettingCheck.engagement_id == _eng_id)
             ).all()
         }
+        _maybe_seed_carryover_checks(
+            s, cand_id, _eng_id, checks_to_trigger, existing,
+        )
 
         now = datetime.datetime.utcnow()
         created = 0
@@ -23247,6 +23461,7 @@ def api_vetting_trigger(cand_id):
                 else:
                     s.add(VettingCheck(
                         candidate_id=cand_id,
+                        engagement_id=_eng_id,
                         check_type=ct,
                         status="In Progress",
                         created_at=now,
@@ -23263,6 +23478,7 @@ def api_vetting_trigger(cand_id):
                 else:
                     s.add(VettingCheck(
                         candidate_id=cand_id,
+                        engagement_id=_eng_id,
                         check_type=ct,
                         status="N/A",
                         notes="Not required for this engagement",
@@ -23480,10 +23696,13 @@ def api_vetting_reset_current(cand_id):
         if not current_check_types:
             return jsonify({"ok": False, "error": "No vetting requirements found for current project"}), 400
 
+        # Req 32 — scope to current engagement so archived rows survive.
+        _eng_id = _current_engagement_id(s, cand_id)
         checks = s.scalars(
             select(VettingCheck)
             .where(VettingCheck.candidate_id == cand_id)
             .where(VettingCheck.check_type.in_(current_check_types))
+            .where(VettingCheck.engagement_id == _eng_id)
         ).all()
 
         reset_count = 0
@@ -23547,10 +23766,16 @@ def api_vetting_reset(cand_id):
             if not check_types:
                 return jsonify({"ok": False, "error": "No vetting requirements set for this candidate"}), 400
 
+        # Req 32 — Reset only operates on the candidate's CURRENT
+        # engagement so archived rows from prior engagements aren't
+        # touched. The candidate-profile tile is already filtered the
+        # same way.
+        _eng_id = _current_engagement_id(s, cand_id)
         query = (
             select(VettingCheck)
             .where(VettingCheck.candidate_id == cand_id)
             .where(VettingCheck.check_type.in_(check_types))
+            .where(VettingCheck.engagement_id == _eng_id)
         )
 
         checks = s.scalars(query).all()
@@ -25596,6 +25821,11 @@ def candidate_profile(cand_id: int):
             if job and job.engagement_id:
                 engagement = s.get(Engagement, job.engagement_id)
 
+        # Req 32 — current engagement id resolved once here. Vetting +
+        # Reference tiles below filter by this so a re-application starts
+        # with a fresh page; older engagements appear in the Archive tab.
+        current_eng_id = engagement.id if engagement else None
+
         # Vetting expiry config (needed for check display below)
         _DEFAULT_EXPIRY = {
             "Right to Work": 12, "Identity Verification": 36,
@@ -25744,10 +25974,15 @@ def candidate_profile(cand_id: int):
             return missing
 
         try:
+            # Req 32 — scope to current engagement so a re-application
+            # starts with a fresh tile; archived rows live in the Archive
+            # tab handled below.
             existing_checks = {
                 vc.check_type: vc
                 for vc in s.scalars(
-                    select(VettingCheck).where(VettingCheck.candidate_id == cand_id)
+                    select(VettingCheck)
+                    .where(VettingCheck.candidate_id == cand_id)
+                    .where(VettingCheck.engagement_id == current_eng_id)
                 ).all()
             }
             
@@ -26228,6 +26463,7 @@ def candidate_profile(cand_id: int):
                 for rr in s.scalars(
                     select(ReferenceRequest)
                     .where(ReferenceRequest.candidate_id == cand_id)
+                    .where(ReferenceRequest.engagement_id == current_eng_id)
                     .order_by(ReferenceRequest.created_at.desc())
                 ).all()
             ]
@@ -26254,6 +26490,7 @@ def candidate_profile(cand_id: int):
                 for rr in s.scalars(
                     select(ReferenceRequest)
                     .where(ReferenceRequest.candidate_id == cand_id)
+                    .where(ReferenceRequest.engagement_id == current_eng_id)
                 ).all():
                     if rr.employment_history_id:
                         ref_by_emp_id[rr.employment_history_id] = rr
@@ -26874,6 +27111,85 @@ def candidate_profile(cand_id: int):
         current_app.logger.exception("verifile_final_reports lookup failed")
         verifile_final_reports = []
 
+    # Req 32 — assemble archived engagements (vetting + references) for
+    # the Archive tab. Anything where engagement_id != current_eng_id
+    # (including NULL engagement_id, surfaced under "Unassociated") goes
+    # here, read-only. Newest engagement first.
+    archived_engagements = []
+    try:
+        with Session(engine) as _s_arch:
+            _archive_vc = _s_arch.scalars(
+                select(VettingCheck)
+                .where(VettingCheck.candidate_id == cand_id)
+                .where(
+                    or_(
+                        VettingCheck.engagement_id.is_(None),
+                        VettingCheck.engagement_id != current_eng_id,
+                    )
+                )
+                .order_by(VettingCheck.created_at.asc())
+            ).all() if current_eng_id else _s_arch.scalars(
+                select(VettingCheck)
+                .where(VettingCheck.candidate_id == cand_id)
+                .order_by(VettingCheck.created_at.asc())
+            ).all()
+            _archive_rr = _s_arch.scalars(
+                select(ReferenceRequest)
+                .where(ReferenceRequest.candidate_id == cand_id)
+                .where(
+                    or_(
+                        ReferenceRequest.engagement_id.is_(None),
+                        ReferenceRequest.engagement_id != current_eng_id,
+                    )
+                )
+                .order_by(ReferenceRequest.created_at.asc())
+            ).all() if current_eng_id else _s_arch.scalars(
+                select(ReferenceRequest)
+                .where(ReferenceRequest.candidate_id == cand_id)
+                .order_by(ReferenceRequest.created_at.asc())
+            ).all()
+            # Group by engagement_id (None == "Unassociated").
+            _arch_buckets: Dict = {}
+            for vc in _archive_vc:
+                k = vc.engagement_id
+                bucket = _arch_buckets.setdefault(k, {"vetting": [], "refs": []})
+                bucket["vetting"].append(vc)
+            for rr in _archive_rr:
+                k = rr.engagement_id
+                bucket = _arch_buckets.setdefault(k, {"vetting": [], "refs": []})
+                bucket["refs"].append(rr)
+            # Resolve engagement metadata + sort newest-first by last_seen.
+            for eng_id, bucket in _arch_buckets.items():
+                eng_row = _s_arch.get(Engagement, eng_id) if eng_id else None
+                all_dates = [
+                    d for d in (
+                        [vc.created_at for vc in bucket["vetting"]]
+                        + [vc.completed_at for vc in bucket["vetting"]]
+                        + [rr.created_at for rr in bucket["refs"]]
+                        + [rr.received_at for rr in bucket["refs"]]
+                    ) if d is not None
+                ]
+                first_seen = min(all_dates) if all_dates else None
+                last_seen = max(all_dates) if all_dates else None
+                archived_engagements.append({
+                    "engagement": eng_row,
+                    "engagement_id": eng_id,
+                    "engagement_ref": (eng_row.ref if eng_row else "") or "",
+                    "engagement_name": (eng_row.name if eng_row else "") or
+                                       ("Unassociated" if eng_id is None else f"Engagement #{eng_id}"),
+                    "vetting": bucket["vetting"],
+                    "refs": bucket["refs"],
+                    "first_seen": first_seen,
+                    "last_seen": last_seen,
+                })
+            archived_engagements.sort(
+                key=lambda b: (b["last_seen"] or datetime.datetime.min),
+                reverse=True,
+            )
+    except Exception:
+        current_app.logger.exception("archived_engagements build failed")
+        archived_engagements = []
+
     return render_template(
         "candidate_profile.html",
         appn=latest_app,            # can be None
@@ -26940,6 +27256,9 @@ def candidate_profile(cand_id: int):
         # Reference requests for preview/send
         reference_requests=reference_requests,
         ref_timeline=ref_timeline,
+        # Req 32 — Archive tab data
+        archived_engagements=archived_engagements,
+        current_eng_id=current_eng_id,
         # Req-027: Active engagements for manual placement creation
         active_engagements=s.scalars(
             select(Engagement).where(Engagement.status == "Active").order_by(Engagement.name)
@@ -27014,9 +27333,14 @@ def candidate_add_vetting_check(cand_id: int):
         existing = s.scalar(
             select(VettingCheck)
             .where(VettingCheck.candidate_id == cand_id, VettingCheck.check_type == check_type)
+            .where(VettingCheck.engagement_id == _current_engagement_id(s, cand_id))
         )
         if not existing:
-            s.add(VettingCheck(candidate_id=cand_id, check_type=check_type, status="NOT STARTED"))
+            s.add(VettingCheck(
+                candidate_id=cand_id,
+                engagement_id=_current_engagement_id(s, cand_id),
+                check_type=check_type, status="NOT STARTED",
+            ))
             s.commit()
             flash(f"'{check_type}' check added.", "success")
         else:
@@ -27280,18 +27604,34 @@ def _auto_create_vetting_checks(session, candidate_id: int, engagement_id: int =
         except Exception:
             pass
 
-    # Don't duplicate existing checks
+    # Req 32 — scope per-engagement so re-applications get fresh rows.
     existing_types = set(
         r[0] for r in session.execute(
-            select(VettingCheck.check_type).where(VettingCheck.candidate_id == candidate_id)
+            select(VettingCheck.check_type)
+            .where(VettingCheck.candidate_id == candidate_id)
+            .where(VettingCheck.engagement_id == engagement_id)
         ).all()
     )
+    # Auto-carry in-date Complete checks from previous engagements.
+    existing_map = {
+        vc.check_type: vc
+        for vc in session.scalars(
+            select(VettingCheck)
+            .where(VettingCheck.candidate_id == candidate_id)
+            .where(VettingCheck.engagement_id == engagement_id)
+        ).all()
+    }
+    _maybe_seed_carryover_checks(
+        session, candidate_id, engagement_id, checks_to_create, existing_map,
+    )
+    existing_types = set(existing_map.keys())
 
     created = 0
     for ct in checks_to_create:
         if ct not in existing_types:
             session.add(VettingCheck(
                 candidate_id=candidate_id,
+                engagement_id=engagement_id,
                 check_type=ct,
                 status="WAITING FOR ASSOCIATE"
             ))
@@ -27315,9 +27655,13 @@ def _auto_trigger_vetting(session, candidate_id: int, job_id: int = None):
     # Ensure checks exist first
     _auto_create_vetting_checks(session, candidate_id, engagement_id)
 
-    # Trigger: move all WAITING/NOT STARTED checks to In Progress
+    # Trigger: move all WAITING/NOT STARTED checks to In Progress.
+    # Req 32 — scope to the engagement the trigger was raised for so
+    # archived checks aren't touched.
     checks = session.scalars(
-        select(VettingCheck).where(VettingCheck.candidate_id == candidate_id)
+        select(VettingCheck)
+        .where(VettingCheck.candidate_id == candidate_id)
+        .where(VettingCheck.engagement_id == engagement_id)
     ).all()
     triggered = 0
     for vc in checks:
@@ -27373,16 +27717,22 @@ def start_vetting(cand_id: int):
             flash("Associate not found.", "danger")
             return redirect(url_for("workflow"))
 
-        # Create vetting checks if they don't exist
+        # Req 32 — engagement-scoped so re-applications get fresh rows.
+        _eng_id = _current_engagement_id(s, cand_id)
         existing_types = set(
             r[0] for r in s.execute(
-                select(VettingCheck.check_type).where(VettingCheck.candidate_id == cand_id)
+                select(VettingCheck.check_type)
+                .where(VettingCheck.candidate_id == cand_id)
+                .where(VettingCheck.engagement_id == _eng_id)
             ).all()
         )
         created = 0
         for ct in ALL_VETTING_CHECKS:
             if ct not in existing_types:
-                s.add(VettingCheck(candidate_id=cand_id, check_type=ct, status="NOT STARTED"))
+                s.add(VettingCheck(
+                    candidate_id=cand_id, engagement_id=_eng_id,
+                    check_type=ct, status="NOT STARTED",
+                ))
                 created += 1
 
         # Send email notification to candidate using the vetting_commencement template
@@ -28071,8 +28421,11 @@ def send_reference(cand_id: int):
             ref_req = s.get(ReferenceRequest, ref_id)
 
         if not ref_req:
+            # Req 32 — stamp engagement_id so the row appears under the
+            # current engagement on the candidate profile.
             ref_req = ReferenceRequest(
                 candidate_id=cand_id,
+                engagement_id=_current_engagement_id(s, cand_id),
                 company_name=company_name,
                 referee_email=referee_email,
                 employment_history_id=emp_id,
@@ -34684,10 +35037,15 @@ def _validate_check_data(candidate_id, check_type, session_obj):
 
     # Check ID verification
     if reqs.get("requires_id_verified"):
+        # Req 32 — current-engagement scope so prior verified ID on an
+        # archived engagement doesn't satisfy the readiness check unless
+        # it carries over as CHECK STILL IN DATE for this engagement.
+        _eng_id_pre = _current_engagement_id(session_obj, candidate_id)
         id_check = session_obj.scalar(
             select(VettingCheck)
             .where(VettingCheck.candidate_id == candidate_id,
                    VettingCheck.check_type == "Identity Verification")
+            .where(VettingCheck.engagement_id == _eng_id_pre)
         )
         if not id_check or not id_check.id_verified:
             missing.append("ID must be verified (video call/in-person/IDVT)")
