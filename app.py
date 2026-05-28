@@ -20594,14 +20594,23 @@ VERIFILE_CHECK_MAP = {
 
 # Req 26 — DBS criminal-record CheckTypeId varies by region. The map above
 # holds the England & Wales basic check; for an associate whose current
-# home address is in Scotland the Scotland variant is used instead. The
-# region is driven by the "current address in Scotland" answer captured on
-# the associate portal personal-details page.
-VERIFILE_DBS_SCOTLAND_CHECK_ID = "UKCriminalRecordBasicScotland"
+# home address is in Scotland the Scotland Level-1 variant is used
+# instead (Package B contains "UK Criminal Record (Level 1, Scotland)",
+# not the Basic Scotland product). The region is driven by the
+# "current address in Scotland" answer captured on the associate
+# portal personal-details page.
+VERIFILE_DBS_SCOTLAND_CHECK_ID = "UKCriminalRecordLevel1Scotland"
 
-# Req 26 — Verifile pre-configured packages bundle DBS + UK Credit +
-# Online ID + Right-to-Work into one order so they can be placed via
-# Verifile's `"Package"` field instead of an explicit CheckGroups list.
+# Req 26 — Verifile pre-configured packages each contain exactly two
+# checks:
+#   Package A (England & Wales): UK Credit Check (Equifax) +
+#       UK Criminal Record (Basic, England & Wales)
+#   Package B (Scotland): UK Credit Check (Equifax) +
+#       UK Criminal Record (Level 1, Scotland)
+# Identity Verification, Right to Work, Sanctions/PEP and Social Media
+# Review are NOT in either package — they go to Verifile as individual
+# CheckGroups entries in the residual candidate-entry order.
+#
 # Packages are candidate-entry only per Verifile's API docs ("Packages
 # currently can only be for candidate entry orders"), so package-
 # eligible checks are routed via the candidate-entry endpoint
@@ -20615,15 +20624,17 @@ VERIFILE_DBS_SCOTLAND_CHECK_ID = "UKCriminalRecordBasicScotland"
 # without a redeploy if Verifile re-labels them.
 VERIFILE_PACKAGE_EW = os.getenv("VERIFILE_PACKAGE_EW", "Package A Criminal and Credit")
 VERIFILE_PACKAGE_SC = os.getenv("VERIFILE_PACKAGE_SC", "Package B DS, Credit and Right to Work")
-# OS1 check-type names that the package bundles. The
-# Scotland variant of the DBS swap is handled inside the package by
-# Verifile — we pick the package name by region, but the OS1 check-
-# type label is the same ("DBS Check") either way.
+# OS1 check-type names that the package bundles. Only the two checks
+# Verifile has actually preselected in each package — DBS and Credit.
+# The router peels these off into a Package order; every other Verifile-
+# mapped check (Identity, Right to Work, Sanctions, Social Media) flows
+# through the residual CheckGroups order as an individual line. The
+# Scotland variant of the DBS swap is handled by `_verifile_resolve_check_id`
+# when those checks travel outside a package; inside the package, region
+# is driven by the package name itself.
 VERIFILE_PACKAGE_CHECK_TYPES = {
     "DBS Check",
     "Credit Check",
-    "Identity Verification",
-    "Right to Work",
 }
 
 
