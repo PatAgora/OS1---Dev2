@@ -6181,7 +6181,7 @@ def admin_engagement_invoices_zip(engagement_id: int):
         ).all()
         if not invoices:
             flash("No invoices have been raised for this engagement yet.", "warning")
-            return redirect(url_for("edit_engagement", eng_id=engagement_id))
+            return redirect(url_for("engagement_edit", eng_id=engagement_id))
 
         buf = _io.BytesIO()
         zip_failures = []
@@ -17670,7 +17670,7 @@ def workflow():
         # Helper function to get vetting progress for a candidate
         SLA_DAYS = 7  # 7 day SLA for vetting completion
         
-        def get_vetting_progress(candidate_id, required_types=None):
+        def get_vetting_progress(candidate_id, required_types=None, engagement_id=None):
             """Get vetting check progress for a candidate with SLA status.
 
             Req 42 — when required_types is provided (the role/engagement's
@@ -17679,6 +17679,14 @@ def workflow():
             profile (which already shows only required checks). When
             required_types is empty/None, falls back to counting all
             vetting_check rows for the candidate (legacy behaviour).
+
+            Req 32 — engagement_id scopes the count to a single
+            engagement so a candidate placed on a previous engagement
+            (with their old engagement's vetting check rows still in
+            the DB) doesn't inflate the kanban card's "N/M complete"
+            badge for their current engagement. When engagement_id is
+            None, no engagement filter is applied — matches legacy
+            behaviour.
             """
             try:
                 params = {"cand_id": candidate_id}
@@ -17691,6 +17699,9 @@ def workflow():
                     for i, t in enumerate(types_list):
                         params[f"t{i}"] = t
                     where_extra = f" AND check_type IN ({placeholders})"
+                if engagement_id:
+                    params["eng_id"] = engagement_id
+                    where_extra += " AND engagement_id = :eng_id"
 
                 vetting_stats = s.execute(
                     text(f"""
@@ -17858,7 +17869,10 @@ def workflow():
                     "start_date": engagement.start_date if engagement else None,
                     "intake": intake,
                     "days_in_stage": (now - app.created_at).days if app.created_at else 0,
-                    "vetting_progress": get_vetting_progress(cand.id, _required_types),
+                    "vetting_progress": get_vetting_progress(
+                        cand.id, _required_types,
+                        engagement_id=(engagement.id if engagement else None),
+                    ),
                     "referencing_progress": get_referencing_progress(cand.id),
                 })
             stage_data[stage["id"]] = cards
