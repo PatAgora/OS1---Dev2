@@ -20563,18 +20563,23 @@ VERIFILE_CHECK_MAP = {
 # the associate portal personal-details page.
 VERIFILE_DBS_SCOTLAND_CHECK_ID = "UKCriminalRecordBasicScotland"
 
-# Req 26 — Verifile pre-configured "OS1 Standard" packages bundle DBS +
-# UK Credit + Online ID + Right-to-Work into one order so they can be
-# placed via Verifile's `"Package"` field instead of an explicit
-# CheckGroups list. Packages are candidate-entry only per Verifile's
-# API docs ("Packages currently can only be for candidate entry
-# orders"), so package-eligible checks are routed via the candidate-
-# entry endpoint regardless of how the rest of the order is placed.
-# Names are matched verbatim against Verifile's package catalogue; env
-# vars let us rename without a redeploy.
-VERIFILE_PACKAGE_EW = os.getenv("VERIFILE_PACKAGE_EW", "OS1 Standard - England and Wales")
-VERIFILE_PACKAGE_SC = os.getenv("VERIFILE_PACKAGE_SC", "OS1 Standard - Scotland")
-# OS1 check-type names that the OS1 Standard package bundles. The
+# Req 26 — Verifile pre-configured packages bundle DBS + UK Credit +
+# Online ID + Right-to-Work into one order so they can be placed via
+# Verifile's `"Package"` field instead of an explicit CheckGroups list.
+# Packages are candidate-entry only per Verifile's API docs ("Packages
+# currently can only be for candidate entry orders"), so package-
+# eligible checks are routed via the candidate-entry endpoint
+# regardless of how the rest of the order is placed.
+#
+# In OS1's internal copy, taxonomy and reporting these packages are
+# still referred to as "OS1 Standard - England and Wales" / "OS1
+# Standard - Scotland" — the names below are the literal package
+# strings registered in Verifile's catalogue, which must match
+# verbatim or the API rejects the order. Env vars let us rename
+# without a redeploy if Verifile re-labels them.
+VERIFILE_PACKAGE_EW = os.getenv("VERIFILE_PACKAGE_EW", "Package A Criminal and Credit")
+VERIFILE_PACKAGE_SC = os.getenv("VERIFILE_PACKAGE_SC", "Package B DS, Credit and Right to Work")
+# OS1 check-type names that the package bundles. The
 # Scotland variant of the DBS swap is handled inside the package by
 # Verifile — we pick the package name by region, but the OS1 check-
 # type label is the same ("DBS Check") either way.
@@ -20969,7 +20974,7 @@ def verifile_place_candidate_entry_package_order(
     name: str, email: str, candidate_id: int, package_name: str
 ) -> str:
     """Req 26 — place a candidate-entry order using a Verifile pre-configured
-    package (e.g. "OS1 Standard - England and Wales"). Replaces the
+    package (e.g. "Package A Criminal and Credit"). Replaces the
     explicit CheckGroups array with the `"Package"` field. The candidate
     completes the rest of the data via Verifile's web portal.
 
@@ -21471,12 +21476,15 @@ def verifile_submit_all_checks(candidate_id: int, cand_name: str, cand_email: st
         candidate_entry_list.extend(client_entry_list)
         client_entry_list = []
 
-    # --- Package order for the OS1 Standard bundle (Req 26) ---
+    # --- Package order (Req 26) ---
     # If any of (DBS / Credit / Identity / Right to Work) are being
     # submitted AND we know the region, peel them off into ONE
-    # candidate-entry order using Verifile's `"Package"` field
-    # (England-and-Wales vs Scotland chosen by the associate's
-    # "current address in Scotland" flag captured during onboarding).
+    # candidate-entry order using Verifile's `"Package"` field.
+    # Region drives which Verifile package name is sent: the EW
+    # variant ("Package A Criminal and Credit") for England & Wales
+    # associates, the Scotland variant ("Package B DS, Credit and
+    # Right to Work") when current_address_in_scotland is True on
+    # the AssociateProfile. The flag is captured during onboarding.
     # The remaining checks (References, Qualifications, Sanctions,
     # Directorship, Social Media, etc) still flow through the existing
     # CheckGroups candidate-entry order below.
@@ -21531,7 +21539,7 @@ def verifile_submit_all_checks(candidate_id: int, cand_name: str, cand_email: st
                 )
         else:
             print(f"[Verifile] Region unknown for candidate {candidate_id} — "
-                  f"skipping OS1 Standard package, all checks via CheckGroups.")
+                  f"skipping package, all checks via CheckGroups.")
 
     # --- Candidate-entry order for remaining checks ---
     if candidate_entry_list:
