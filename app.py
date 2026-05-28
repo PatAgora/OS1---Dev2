@@ -33827,16 +33827,46 @@ def download_document(doc_id):
     with Session(engine) as s:
         doc = s.get(Document, doc_id)
         if not doc:
+            print(f"[download_document] doc_id={doc_id} → no Document row", flush=True)
             abort(404)
-        
-        # Use the same path resolution logic
+
+        # Primary path resolution (covers the canonical /data + static
+        # + UPLOAD_FOLDER candidates).
         path = _doc_file_path(doc)
-        if os.path.exists(path):
+        if path and os.path.isfile(path):
             directory = os.path.dirname(path)
             filename = os.path.basename(path)
             download_name = doc.original_name or filename
             return send_from_directory(directory, filename, as_attachment=True, download_name=download_name)
-        
+
+        # Fallback: derive the raw on-disk path the associate portal's
+        # `_save_file` would produce — the basename of doc.filename
+        # joined to `/data/uploads/associate_docs/` (Railway) or
+        # `<app>/static/uploads/associate_docs/` (dev). Catches cases
+        # where doc.filename was stored without the standard prefix.
+        try:
+            raw_basename = os.path.basename(doc.filename or "")
+            fallback_dirs = [
+                "/data/uploads/associate_docs",
+                os.path.join(os.path.dirname(__file__), "static", "uploads", "associate_docs"),
+            ]
+            for fdir in fallback_dirs:
+                if not os.path.isdir(fdir):
+                    continue
+                fpath = os.path.join(fdir, raw_basename)
+                if os.path.isfile(fpath):
+                    return send_from_directory(
+                        fdir, raw_basename, as_attachment=True,
+                        download_name=doc.original_name or raw_basename,
+                    )
+        except Exception:
+            current_app.logger.exception("download_document fallback failed")
+
+        print(
+            f"[download_document] doc_id={doc_id} stored_filename={doc.filename!r} "
+            f"resolved_path={path!r} (not found on disk)",
+            flush=True,
+        )
         abort(404)
 
 # =========================================================================
