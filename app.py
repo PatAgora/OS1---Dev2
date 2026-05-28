@@ -28049,14 +28049,21 @@ def update_vetting_check(cand_id: int):
     with Session(engine) as s:
         cand = s.get(Candidate, cand_id)
         old_status_value = None
-        
-        # Check if this vetting check already exists
+
+        # Req 32 — engagement-scoped lookup. Without this filter the
+        # save would hit a stale archived row from a prior engagement
+        # (or land an engagement_id=NULL row that the live tile filters
+        # out, making it look like the save failed).
+        _eng_id = _current_engagement_id(s, cand_id)
+
+        # Check if this vetting check already exists for the current engagement
         existing = s.scalar(
             select(VettingCheck)
             .where(VettingCheck.candidate_id == cand_id)
             .where(VettingCheck.check_type == check_type)
+            .where(VettingCheck.engagement_id == _eng_id)
         )
-        
+
         if existing:
             old_status_value = existing.status
             nu = new_status.upper()
@@ -28091,6 +28098,7 @@ def update_vetting_check(cand_id: int):
         else:
             new_check = VettingCheck(
                 candidate_id=cand_id,
+                engagement_id=_eng_id,
                 check_type=check_type,
                 status=new_status,
                 notes=notes,
@@ -28176,10 +28184,14 @@ def manual_vetting_entry(cand_id: int):
         if not cand:
             abort(404)
 
+        # Req 32 — engagement-scoped lookup so manual entry writes the
+        # current engagement's row, not an archived prior-engagement row.
+        _eng_id = _current_engagement_id(s, cand_id)
         existing = s.scalar(
             select(VettingCheck)
             .where(VettingCheck.candidate_id == cand_id)
             .where(VettingCheck.check_type == check_type)
+            .where(VettingCheck.engagement_id == _eng_id)
         )
 
         completed_dt = None
@@ -28210,6 +28222,7 @@ def manual_vetting_entry(cand_id: int):
         else:
             new_check = VettingCheck(
                 candidate_id=cand_id,
+                engagement_id=_eng_id,
                 check_type=check_type,
                 status=status,
                 notes=notes,
@@ -28463,6 +28476,7 @@ def submit_for_qc(cand_id: int):
         vc = s.scalar(
             select(VettingCheck)
             .where(VettingCheck.candidate_id == cand_id, VettingCheck.check_type == check_type)
+            .where(VettingCheck.engagement_id == _current_engagement_id(s, cand_id))
         )
         if not vc:
             flash("Vetting check not found.", "danger")
@@ -28496,6 +28510,7 @@ def qc_approve(cand_id: int):
         vc = s.scalar(
             select(VettingCheck)
             .where(VettingCheck.candidate_id == cand_id, VettingCheck.check_type == check_type)
+            .where(VettingCheck.engagement_id == _current_engagement_id(s, cand_id))
         )
         if not vc:
             flash("Vetting check not found.", "danger")
@@ -28532,6 +28547,7 @@ def qc_reject(cand_id: int):
         vc = s.scalar(
             select(VettingCheck)
             .where(VettingCheck.candidate_id == cand_id, VettingCheck.check_type == check_type)
+            .where(VettingCheck.engagement_id == _current_engagement_id(s, cand_id))
         )
         if not vc:
             flash("Vetting check not found.", "danger")
@@ -28572,6 +28588,7 @@ def assign_analyst(cand_id: int):
         vc = s.scalar(
             select(VettingCheck)
             .where(VettingCheck.candidate_id == cand_id, VettingCheck.check_type == check_type)
+            .where(VettingCheck.engagement_id == _current_engagement_id(s, cand_id))
         )
         if not vc:
             flash("Vetting check not found.", "danger")
@@ -28639,6 +28656,7 @@ def assign_qc_reviewer(cand_id: int):
         vc = s.scalar(
             select(VettingCheck)
             .where(VettingCheck.candidate_id == cand_id, VettingCheck.check_type == check_type)
+            .where(VettingCheck.engagement_id == _current_engagement_id(s, cand_id))
         )
         if not vc:
             return jsonify({"ok": False, "msg": "Check not found"}), 404
@@ -28804,6 +28822,7 @@ def set_check_colour(cand_id: int):
         vc = s.scalar(
             select(VettingCheck)
             .where(VettingCheck.candidate_id == cand_id, VettingCheck.check_type == check_type)
+            .where(VettingCheck.engagement_id == _current_engagement_id(s, cand_id))
         )
         if vc:
             vc.colour = colour
@@ -35481,6 +35500,7 @@ def referral_approve(cand_id: int):
         vc = s.scalar(
             select(VettingCheck)
             .where(VettingCheck.candidate_id == cand_id, VettingCheck.check_type == check_type)
+            .where(VettingCheck.engagement_id == _current_engagement_id(s, cand_id))
         )
         if not vc:
             flash("Vetting check not found.", "danger")
