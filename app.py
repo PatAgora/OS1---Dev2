@@ -10914,6 +10914,11 @@ class Candidate(Base):
     esign_status = Column(String(50), default=None)
     employment_ref_declaration_signed = Column(Boolean, default=False)
     employment_ref_declaration_signed_at = Column(DateTime, nullable=True)
+    # Req 5 — HMRC Employment Record digital upload. Associate uploads
+    # the form on /portal/references/employment instead of emailing it.
+    # Tracked on Candidate (one record per associate; replacing supersedes).
+    hmrc_record_doc_id = Column(Integer, nullable=True)
+    hmrc_record_uploaded_at = Column(DateTime, nullable=True)
     # Secondary Job Declaration — signed via Signable widget on the
     # associate portal. Kept as Candidate-level flags to mirror the
     # employment-ref declaration pattern (no dedicated model).
@@ -12498,6 +12503,9 @@ try:
         for _stmt in [
             "ALTER TABLE candidates ADD COLUMN employment_ref_declaration_signed BOOLEAN DEFAULT FALSE",
             "ALTER TABLE candidates ADD COLUMN employment_ref_declaration_signed_at TIMESTAMP",
+            # Req 5 — HMRC Employment Record digital upload.
+            "ALTER TABLE candidates ADD COLUMN hmrc_record_doc_id INTEGER",
+            "ALTER TABLE candidates ADD COLUMN hmrc_record_uploaded_at TIMESTAMP",
             "ALTER TABLE candidates ADD COLUMN secondary_job_declaration_signed BOOLEAN DEFAULT FALSE",
             "ALTER TABLE candidates ADD COLUMN secondary_job_declaration_signed_at TIMESTAMP",
             "ALTER TABLE candidates ADD COLUMN secondary_job_has_secondary BOOLEAN DEFAULT FALSE",

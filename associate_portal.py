@@ -2952,6 +2952,31 @@ def references_employment():
                                     "filename": getattr(d, "filename", ""),
                                 }
 
+    # Req 5 — HMRC employment record upload state for the on-page widget.
+    hmrc_record = None
+    try:
+        Candidate = _model("Candidate")
+        Document = _model("Document")
+        if Candidate:
+            with SASession(engine) as s_hmrc:
+                _c = s_hmrc.get(Candidate, cand_id)
+                if _c and getattr(_c, "hmrc_record_doc_id", None):
+                    doc_row = (
+                        s_hmrc.query(Document).filter_by(id=_c.hmrc_record_doc_id).first()
+                        if Document else None
+                    )
+                    if doc_row:
+                        hmrc_record = {
+                            "id": doc_row.id,
+                            "original_name": getattr(doc_row, "original_name", "")
+                                              or getattr(doc_row, "filename", "")
+                                              or "HMRC record",
+                            "uploaded_at": getattr(_c, "hmrc_record_uploaded_at", None),
+                        }
+    except Exception:
+        current_app.logger.exception("references_employment: HMRC record lookup failed")
+        hmrc_record = None
+
     # Surface the 5-year coverage check on the form page itself so the
     # associate is told upfront if their timeline doesn't reach back
     # five years yet. Uses the same logic as the downstream vetting
@@ -2987,6 +3012,7 @@ def references_employment():
         coverage_ok=coverage_ok,
         coverage_msg=coverage_msg,
         years_covered=years_covered,
+        hmrc_record=hmrc_record,
     )
 
 
@@ -3110,6 +3136,136 @@ def references_gap_evidence_remove(entry_id: int):
 
     flash("Gap evidence deleted.", "success")
     return redirect(url_for("associate.references_employment"))
+
+
+# ---------------------------------------------------------------------------
+# Req 5 — HMRC Employment Record upload / remove
+# ---------------------------------------------------------------------------
+
+# Same extension whitelist as gap evidence — PDF + Word + Excel + images
+# cover every file format HMRC can return for the employment-history form.
+_HMRC_ALLOWED_EXT = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".png", ".jpg", ".jpeg"}
+
+
+@associate_bp.route("/references/hmrc-record/upload", methods=["POST"])
+@_require_login
+def references_hmrc_record_upload():
+    """Req 5 — associate uploads (or replaces) their HMRC employment
+    record. Replaces the previous email-to-compliance step. Stores the
+    file as a `Document(doc_type='hmrc_employment_record')` and stamps
+    `Candidate.hmrc_record_doc_id` + `_uploaded_at`. Uploading again
+    cleanly replaces the previous file."""
+    Candidate = _model("Candidate")
+    Document = _model("Document")
+    engine = _engine()
+    cand_id = _get_associate_id()
+
+    if not Candidate:
+        flash("Candidate record not available.", "danger")
+        return redirect(url_for("associate.references_employment"))
+
+    new_file = request.files.get("hmrc_file")
+    if not new_file or not new_file.filename:
+        flash("Please choose a file to upload.", "warning")
+        return redirect(url_for("associate.references_employment") + "#hmrc-record")
+
+    ext = os.path.splitext(new_file.filename)[1].lower()
+    if ext not in _HMRC_ALLOWED_EXT:
+        flash("HMRC record must be a PDF, Word, Excel, PNG or JPG file.", "danger")
+        return redirect(url_for("associate.references_employment") + "#hmrc-record")
+
+    saved = _save_file(new_file)
+    if not saved:
+        flash("Could not save the uploaded file. Please try again.", "danger")
+        return redirect(url_for("associate.references_employment") + "#hmrc-record")
+
+    with SASession(engine) as s:
+        cand = s.get(Candidate, cand_id)
+        if not cand:
+            flash("Candidate record not found.", "danger")
+            return redirect(url_for("associate.references_employment"))
+
+        # Replace the previous file + Document row if one exists.
+        old_doc_id = getattr(cand, "hmrc_record_doc_id", None)
+        if old_doc_id and Document:
+            old = s.query(Document).filter_by(id=old_doc_id, candidate_id=cand_id).first()
+            if old:
+                old_path = _resolve_document_path(getattr(old, "filename", "") or "")
+                if old_path and os.path.isfile(old_path):
+                    try:
+                        os.remove(old_path)
+                    except OSError:
+                        current_app.logger.exception(
+                            "HMRC record replace: failed to delete prior file %s", old_path,
+                        )
+                s.delete(old)
+
+        new_doc_id = None
+        if Document:
+            new_doc = Document(
+                candidate_id=cand_id,
+                doc_type="hmrc_employment_record",
+                filename=saved["filename"],
+                original_name=saved["original_name"],
+                uploaded_at=datetime.utcnow(),
+            )
+            s.add(new_doc)
+            s.flush()
+            new_doc_id = new_doc.id
+
+        cand.hmrc_record_doc_id = new_doc_id
+        cand.hmrc_record_uploaded_at = datetime.utcnow()
+        _add_note(s, cand_id, f"HMRC employment record uploaded: {saved['original_name']}.")
+        s.commit()
+
+    flash("HMRC employment record uploaded.", "success")
+    return redirect(url_for("associate.references_employment") + "#hmrc-record")
+
+
+@associate_bp.route("/references/hmrc-record/remove", methods=["POST"])
+@_require_login
+def references_hmrc_record_remove():
+    """Delete the HMRC employment record (file + Document row + flag)."""
+    Candidate = _model("Candidate")
+    Document = _model("Document")
+    engine = _engine()
+    cand_id = _get_associate_id()
+
+    if not Candidate:
+        flash("Candidate record not available.", "danger")
+        return redirect(url_for("associate.references_employment"))
+
+    with SASession(engine) as s:
+        cand = s.get(Candidate, cand_id)
+        if not cand:
+            flash("Candidate record not found.", "danger")
+            return redirect(url_for("associate.references_employment"))
+
+        doc_id = getattr(cand, "hmrc_record_doc_id", None)
+        deleted_name = ""
+        if doc_id and Document:
+            doc = s.query(Document).filter_by(id=doc_id, candidate_id=cand_id).first()
+            if doc:
+                deleted_name = getattr(doc, "original_name", "") or getattr(doc, "filename", "")
+                filepath = _resolve_document_path(getattr(doc, "filename", "") or "")
+                if filepath and os.path.isfile(filepath):
+                    try:
+                        os.remove(filepath)
+                    except OSError:
+                        current_app.logger.exception(
+                            "HMRC record remove: failed to delete file %s", filepath,
+                        )
+                s.delete(doc)
+        cand.hmrc_record_doc_id = None
+        cand.hmrc_record_uploaded_at = None
+        _add_note(
+            s, cand_id,
+            f"HMRC employment record deleted{(': ' + deleted_name) if deleted_name else ''}.",
+        )
+        s.commit()
+
+    flash("HMRC employment record removed.", "success")
+    return redirect(url_for("associate.references_employment") + "#hmrc-record")
 
 
 @associate_bp.route("/references/vetting-checks", methods=["GET"])
