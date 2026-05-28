@@ -25772,13 +25772,24 @@ def candidate_profile(cand_id: int):
             select(Application).where(Application.candidate_id == cand_id)
             .order_by(Application.created_at.desc())
         ).all()
+        # Req 32 — current engagement id resolved on the fly here (the
+        # engagement variable below is set later in the view body — too
+        # late for this loop). Used to filter interview_history so the
+        # live Interview tile only shows the current engagement's
+        # interviews; older ones surface in the Archive tab instead.
+        _live_eng_id_for_iv = _current_engagement_id(s, cand_id)
         interview_history = []
         for _ia in _all_apps_for_interview:
             if _ia.interview_scheduled_at:
+                _ia_job = s.get(Job, _ia.job_id) if _ia.job_id else None
+                _ia_eng_id = _ia_job.engagement_id if _ia_job and _ia_job.engagement_id else None
+                # Skip interviews whose application is on a prior
+                # engagement — those land in the Archive tab.
+                if _live_eng_id_for_iv and _ia_eng_id and _ia_eng_id != _live_eng_id_for_iv:
+                    continue
                 if not interview_app:
                     interview_app = _ia
-                _ia_job = s.get(Job, _ia.job_id) if _ia.job_id else None
-                _ia_eng = s.get(Engagement, _ia_job.engagement_id) if _ia_job and _ia_job.engagement_id else None
+                _ia_eng = s.get(Engagement, _ia_eng_id) if _ia_eng_id else None
                 interview_history.append({
                     "role": (_ia_job.title if _ia_job else "") or "Unknown Role",
                     "project": (_ia_eng.name if _ia_eng else "") or "",
@@ -27393,10 +27404,10 @@ def candidate_profile(cand_id: int):
         current_app.logger.exception("verifile_final_reports lookup failed")
         verifile_final_reports = []
 
-    # Req 32 — assemble archived engagements (vetting + references) for
-    # the Archive tab. Anything where engagement_id != current_eng_id
-    # (including NULL engagement_id, surfaced under "Unassociated") goes
-    # here, read-only. Newest engagement first.
+    # Req 32 — assemble archived engagements (vetting + references +
+    # interviews) for the Archive tab. Anything where engagement_id !=
+    # current_eng_id (including NULL engagement_id, surfaced under
+    # "Unassociated") goes here, read-only. Newest engagement first.
     archived_engagements = []
     try:
         with Session(engine) as _s_arch:
@@ -27430,18 +27441,61 @@ def candidate_profile(cand_id: int):
                 .where(ReferenceRequest.candidate_id == cand_id)
                 .order_by(ReferenceRequest.created_at.asc())
             ).all()
+            # Interviews from prior engagements — every Application
+            # whose Job.engagement_id != current_eng_id contributes one
+            # archived interview row when it had an interview scheduled.
+            _archive_interviews_rows = _s_arch.execute(
+                select(
+                    Application.id.label("app_id"),
+                    Application.interview_scheduled_at.label("scheduled_at"),
+                    Application.interview_completed_at.label("completed_at"),
+                    Application.optimus_interview_result.label("outcome_result"),
+                    Application.interview_teams_join_url.label("teams_join_url"),
+                    Job.title.label("role"),
+                    Job.engagement_id.label("eng_id"),
+                )
+                .select_from(Application)
+                .join(Job, Job.id == Application.job_id)
+                .where(Application.candidate_id == cand_id)
+                .where(Application.interview_scheduled_at.isnot(None))
+            ).all()
             # Group by engagement_id (None == "Unassociated").
             _arch_buckets: Dict = {}
             for vc in _archive_vc:
+                # Filter out N/A "not required for this engagement"
+                # markers and never-actioned NOT STARTED rows so the
+                # archive only shows checks the engagement actually
+                # requested or worked on.
+                _st = (vc.status or "").upper()
+                if _st == "N/A":
+                    continue
+                if _st == "NOT STARTED" and not vc.completed_at:
+                    continue
                 k = vc.engagement_id
-                bucket = _arch_buckets.setdefault(k, {"vetting": [], "refs": []})
+                bucket = _arch_buckets.setdefault(k, {"vetting": [], "refs": [], "interviews": []})
                 bucket["vetting"].append(vc)
             for rr in _archive_rr:
                 k = rr.engagement_id
-                bucket = _arch_buckets.setdefault(k, {"vetting": [], "refs": []})
+                bucket = _arch_buckets.setdefault(k, {"vetting": [], "refs": [], "interviews": []})
                 bucket["refs"].append(rr)
+            for iv in _archive_interviews_rows:
+                if current_eng_id and iv.eng_id == current_eng_id:
+                    continue  # interview belongs to the current engagement
+                k = iv.eng_id
+                bucket = _arch_buckets.setdefault(k, {"vetting": [], "refs": [], "interviews": []})
+                bucket["interviews"].append({
+                    "scheduled_at": iv.scheduled_at,
+                    "completed_at": iv.completed_at,
+                    "outcome_result": iv.outcome_result or "",
+                    "role": iv.role or "Unknown Role",
+                    "teams_join_url": iv.teams_join_url or "",
+                    "app_id": iv.app_id,
+                })
             # Resolve engagement metadata + sort newest-first by last_seen.
             for eng_id, bucket in _arch_buckets.items():
+                # Skip empty buckets (e.g. only had N/A rows that we filtered).
+                if not (bucket["vetting"] or bucket["refs"] or bucket["interviews"]):
+                    continue
                 eng_row = _s_arch.get(Engagement, eng_id) if eng_id else None
                 all_dates = [
                     d for d in (
@@ -27449,6 +27503,8 @@ def candidate_profile(cand_id: int):
                         + [vc.completed_at for vc in bucket["vetting"]]
                         + [rr.created_at for rr in bucket["refs"]]
                         + [rr.received_at for rr in bucket["refs"]]
+                        + [iv["scheduled_at"] for iv in bucket["interviews"]]
+                        + [iv["completed_at"] for iv in bucket["interviews"]]
                     ) if d is not None
                 ]
                 first_seen = min(all_dates) if all_dates else None
@@ -27461,6 +27517,7 @@ def candidate_profile(cand_id: int):
                                        ("Unassociated" if eng_id is None else f"Engagement #{eng_id}"),
                     "vetting": bucket["vetting"],
                     "refs": bucket["refs"],
+                    "interviews": bucket["interviews"],
                     "first_seen": first_seen,
                     "last_seen": last_seen,
                 })

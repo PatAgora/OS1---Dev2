@@ -2764,6 +2764,32 @@
                 </div>
               </div>
               <div class="card-body">
+                {% if bucket.interviews %}
+                <h6 class="text-uppercase text-muted small mb-2">Interviews</h6>
+                <table class="table table-sm mb-3">
+                  <thead><tr><th>Role</th><th>Scheduled</th><th>Completed</th><th>Outcome</th></tr></thead>
+                  <tbody>
+                    {% for iv in bucket.interviews %}
+                    <tr>
+                      <td>{{ iv.role }}</td>
+                      <td class="small">{% if iv.scheduled_at %}{{ iv.scheduled_at.strftime('%d %b %Y at %H:%M') }}{% endif %}</td>
+                      <td class="small">{% if iv.completed_at %}{{ iv.completed_at.strftime('%d %b %Y at %H:%M') }}{% endif %}</td>
+                      <td>
+                        {% if iv.outcome_result == 'Pass' %}
+                          <span class="badge bg-success">Pass</span>
+                        {% elif iv.outcome_result in ('Fail', 'No Show') %}
+                          <span class="badge bg-danger">{{ iv.outcome_result }}</span>
+                        {% elif iv.completed_at %}
+                          <span class="badge bg-secondary">Completed</span>
+                        {% else %}
+                          <span class="badge bg-primary">Scheduled</span>
+                        {% endif %}
+                      </td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+                {% endif %}
                 {% if bucket.vetting %}
                 <h6 class="text-uppercase text-muted small mb-2">Vetting Checks</h6>
                 <table class="table table-sm mb-3">
@@ -2812,7 +2838,7 @@
                   </tbody>
                 </table>
                 {% endif %}
-                {% if not bucket.vetting and not bucket.refs %}
+                {% if not bucket.vetting and not bucket.refs and not bucket.interviews %}
                 <p class="text-muted small mb-0">No archived rows.</p>
                 {% endif %}
               </div>
