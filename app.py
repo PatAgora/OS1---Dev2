@@ -25372,13 +25372,21 @@ def candidate_profile(cand_id: int):
         except Exception:
             pass
 
-        # Build combined vetting requirements from engagement + job.
+        # Build vetting requirements list. The engagement is the
+        # authoritative source — when set, ONLY its checks display.
+        # Previously this UNIONed engagement + job which meant editing
+        # the engagement to remove a check did nothing on the candidate
+        # profile if the Job row still carried it (the user's reported
+        # case: 3 ticked on the engagement, 5 still showing on the
+        # candidate profile). Falling back to job vetting_requirements
+        # only when the engagement is empty preserves the legacy /
+        # job-only configuration path.
         # Req 26 — drop any retired check types still stored in older
         # engagement/job vetting_requirements JSON so they cannot reappear.
         required_vetting_checks = set()
         if engagement and engagement.vetting_requirements:
             required_vetting_checks.update(from_json_safe(engagement.vetting_requirements))
-        if job and getattr(job, 'vetting_requirements', None):
+        elif job and getattr(job, 'vetting_requirements', None):
             required_vetting_checks.update(from_json_safe(job.vetting_requirements))
         required_vetting_checks = sorted(
             c for c in required_vetting_checks
