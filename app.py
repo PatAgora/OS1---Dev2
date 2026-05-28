@@ -10947,6 +10947,11 @@ class Candidate(Base):
     # Tracked on Candidate (one record per associate; replacing supersedes).
     hmrc_record_doc_id = Column(Integer, nullable=True)
     hmrc_record_uploaded_at = Column(DateTime, nullable=True)
+    # Req 26 — flagged True when Start Vetting tried to place a Verifile
+    # package order (DBS + Credit) but the associate hasn't yet set the
+    # Scotland-address flag on their profile. Cleared once they do and
+    # staff re-trigger Verifile.
+    needs_scotland_address_confirmation = Column(Boolean, default=False)
     # Secondary Job Declaration — signed via Signable widget on the
     # associate portal. Kept as Candidate-level flags to mirror the
     # employment-ref declaration pattern (no dedicated model).
@@ -12534,6 +12539,8 @@ try:
             # Req 5 — HMRC Employment Record digital upload.
             "ALTER TABLE candidates ADD COLUMN hmrc_record_doc_id INTEGER",
             "ALTER TABLE candidates ADD COLUMN hmrc_record_uploaded_at TIMESTAMP",
+            # Req 26 — Verifile package on hold pending Scotland-address flag.
+            "ALTER TABLE candidates ADD COLUMN needs_scotland_address_confirmation BOOLEAN DEFAULT FALSE",
             "ALTER TABLE candidates ADD COLUMN secondary_job_declaration_signed BOOLEAN DEFAULT FALSE",
             "ALTER TABLE candidates ADD COLUMN secondary_job_declaration_signed_at TIMESTAMP",
             "ALTER TABLE candidates ADD COLUMN secondary_job_has_secondary BOOLEAN DEFAULT FALSE",
@@ -21588,16 +21595,133 @@ def verifile_submit_all_checks(candidate_id: int, cand_name: str, cand_email: st
     if not checks_for_verifile:
         return 0
 
+    submitted = 0
+    client_order_id = None
+    candidate_order_id = None
+    pkg_order_id = None
+
+    # --- Package order (Req 26) ---
+    # Decide BEFORE the client-entry / candidate-entry split so the
+    # bundle is consumed cleanly.
+    # We only place a Package order when EVERY check inside that package
+    # is required for this candidate (today: DBS Check AND Credit Check).
+    # If only one of them is required, sending the package would charge
+    # the client for the unneeded check — cheaper to send the single one
+    # as an individual line. Region must also be known confidently
+    # (Scotland flag captured on AssociateProfile during onboarding);
+    # otherwise we fall through to per-check submission.
+    package_required = set(checks_for_verifile) & VERIFILE_PACKAGE_CHECK_TYPES
+    if package_required == VERIFILE_PACKAGE_CHECK_TYPES:
+        in_scotland = False
+        region_known = False
+        try:
+            from associate_portal import _portal_model
+            AP = _portal_model("AssociateProfile")
+            if AP:
+                with Session(engine) as ps:
+                    prof = ps.scalar(select(AP).where(AP.candidate_id == candidate_id))
+                    if prof is not None and getattr(prof, "current_address_in_scotland", None) is not None:
+                        in_scotland = bool(prof.current_address_in_scotland)
+                        region_known = True
+        except Exception:
+            region_known = False
+        if region_known:
+            package_name = VERIFILE_PACKAGE_SC if in_scotland else VERIFILE_PACKAGE_EW
+            try:
+                pkg_order_id = verifile_place_candidate_entry_package_order(
+                    cand_name, cand_email, candidate_id, package_name
+                )
+                print(f"[Verifile] Package order placed: {pkg_order_id} "
+                      f"(covers {sorted(package_required)})")
+                for check_type in package_required:
+                    vc = session.scalar(
+                        select(VettingCheck)
+                        .where(VettingCheck.candidate_id == candidate_id)
+                        .where(VettingCheck.check_type == check_type)
+                    )
+                    if vc:
+                        vc.external_ref = pkg_order_id
+                        vc.external_provider = "verifile"
+                        vc.status = "In Progress"
+                        submitted += 1
+                # Drop package-covered checks so they don't reach the
+                # downstream client-entry / candidate-entry orders.
+                checks_for_verifile = [
+                    ct for ct in checks_for_verifile if ct not in VERIFILE_PACKAGE_CHECK_TYPES
+                ]
+            except Exception as e:
+                current_app.logger.warning(
+                    f"Verifile: package order failed for candidate #{candidate_id} "
+                    f"({package_name!r}): {e}. Falling back to per-check submission "
+                    f"for these checks."
+                )
+                pkg_order_id = None
+        else:
+            # Region not yet captured. Letting DBS + Credit flow as
+            # individual lines would over-charge the client vs the
+            # package — and we still wouldn't know which Scotland DBS
+            # variant to send. Park both checks with a clear note and
+            # flag the candidate so staff can prompt the associate to
+            # confirm their Scotland address. Other Verifile-eligible
+            # checks (Identity, Right to Work, Sanctions, Social Media)
+            # are unaffected and continue to flow below.
+            print(f"[Verifile] Region unknown for candidate {candidate_id} — "
+                  f"holding {sorted(package_required)} pending associate "
+                  f"Scotland-address confirmation.")
+            now = datetime.datetime.utcnow()
+            parked_msg = (
+                "Awaiting associate to confirm whether current address is in "
+                "Scotland — needed to place the Verifile package order at the "
+                "correct price."
+            )
+            for check_type in package_required:
+                vc = session.scalar(
+                    select(VettingCheck)
+                    .where(VettingCheck.candidate_id == candidate_id)
+                    .where(VettingCheck.check_type == check_type)
+                )
+                if vc:
+                    vc.status = "Awaiting Associate"
+                    vc.notes = parked_msg
+                    vc.completed_at = None
+            try:
+                cand_row = session.get(Candidate, candidate_id)
+                if cand_row is not None and hasattr(cand_row, "needs_scotland_address_confirmation"):
+                    cand_row.needs_scotland_address_confirmation = True
+            except Exception:
+                pass
+            session.add(CandidateNote(
+                candidate_id=candidate_id,
+                user_email="System",
+                note_type="system",
+                content=(
+                    f"Verifile package on hold: {sorted(package_required)} not "
+                    f"submitted — associate has not confirmed Scotland-address "
+                    f"flag in their profile."
+                ),
+                created_at=now,
+            ))
+            checks_for_verifile = [
+                ct for ct in checks_for_verifile if ct not in VERIFILE_PACKAGE_CHECK_TYPES
+            ]
+    elif package_required:
+        # Only ONE of the package's bundled checks is required for this
+        # candidate. Sending the package would over-charge — let the
+        # single check flow as an individual line instead.
+        missing = sorted(VERIFILE_PACKAGE_CHECK_TYPES - package_required)
+        print(f"[Verifile] Package skipped: would bundle {sorted(package_required)} but "
+              f"engagement doesn't require {missing}. Sending individually to avoid "
+              f"package overcharge.")
+
+    if not checks_for_verifile:
+        return submitted
+
     # Split into client-entry and candidate-entry groups
     client_entry_list = [ct for ct in checks_for_verifile if ct in CLIENT_ENTRY_CHECKS]
     candidate_entry_list = [ct for ct in checks_for_verifile if ct not in CLIENT_ENTRY_CHECKS]
 
     print(f"[Verifile] Client-entry checks ({len(client_entry_list)}): {client_entry_list}")
     print(f"[Verifile] Candidate-entry checks ({len(candidate_entry_list)}): {candidate_entry_list}")
-
-    submitted = 0
-    client_order_id = None
-    candidate_order_id = None
 
     # --- Decide: client-entry or candidate-entry for ALL checks ---
     # Client-entry is only used if EVERY piece of data needed across
@@ -21666,71 +21790,6 @@ def verifile_submit_all_checks(candidate_id: int, cand_name: str, cand_email: st
         # Data incomplete — move all to candidate-entry
         candidate_entry_list.extend(client_entry_list)
         client_entry_list = []
-
-    # --- Package order (Req 26) ---
-    # If any of (DBS / Credit / Identity / Right to Work) are being
-    # submitted AND we know the region, peel them off into ONE
-    # candidate-entry order using Verifile's `"Package"` field.
-    # Region drives which Verifile package name is sent: the EW
-    # variant ("Package A Criminal and Credit") for England & Wales
-    # associates, the Scotland variant ("Package B DS, Credit and
-    # Right to Work") when current_address_in_scotland is True on
-    # the AssociateProfile. The flag is captured during onboarding.
-    # The remaining checks (References, Qualifications, Sanctions,
-    # Directorship, Social Media, etc) still flow through the existing
-    # CheckGroups candidate-entry order below.
-    package_eligible = [ct for ct in candidate_entry_list if ct in VERIFILE_PACKAGE_CHECK_TYPES]
-    if package_eligible:
-        # Resolve region. If we can't determine it confidently, skip
-        # the package and let the standard CheckGroups path handle
-        # every check individually — same behaviour as today, just
-        # not benefiting from the package.
-        in_scotland = False
-        region_known = False
-        try:
-            from associate_portal import _portal_model
-            AP = _portal_model("AssociateProfile")
-            if AP:
-                with Session(engine) as ps:
-                    prof = ps.scalar(select(AP).where(AP.candidate_id == candidate_id))
-                    if prof is not None and getattr(prof, "current_address_in_scotland", None) is not None:
-                        in_scotland = bool(prof.current_address_in_scotland)
-                        region_known = True
-        except Exception:
-            region_known = False
-        if region_known:
-            package_name = VERIFILE_PACKAGE_SC if in_scotland else VERIFILE_PACKAGE_EW
-            try:
-                pkg_order_id = verifile_place_candidate_entry_package_order(
-                    cand_name, cand_email, candidate_id, package_name
-                )
-                print(f"[Verifile] Package order placed: {pkg_order_id} "
-                      f"(covers {len(package_eligible)} OS1 checks: {package_eligible})")
-                for check_type in package_eligible:
-                    vc = session.scalar(
-                        select(VettingCheck)
-                        .where(VettingCheck.candidate_id == candidate_id)
-                        .where(VettingCheck.check_type == check_type)
-                    )
-                    if vc:
-                        vc.external_ref = pkg_order_id
-                        vc.external_provider = "verifile"
-                        vc.status = "In Progress"
-                        submitted += 1
-                # Drop package-covered checks from the residual list so
-                # they aren't double-submitted via CheckGroups below.
-                candidate_entry_list = [
-                    ct for ct in candidate_entry_list if ct not in VERIFILE_PACKAGE_CHECK_TYPES
-                ]
-            except Exception as e:
-                current_app.logger.warning(
-                    f"Verifile: package order failed for candidate #{candidate_id} "
-                    f"({package_name!r}): {e}. Falling back to per-check CheckGroups for "
-                    f"these checks."
-                )
-        else:
-            print(f"[Verifile] Region unknown for candidate {candidate_id} — "
-                  f"skipping package, all checks via CheckGroups.")
 
     # --- Candidate-entry order for remaining checks ---
     if candidate_entry_list:
@@ -22885,12 +22944,11 @@ def start_vetting_with_email(cand_id):
                 "Credit Check", "Directorship / Disqualification", "Sanctions / PEP", "Social Media Review"
             ]
 
-            # Honour the engagement's vetting_requirements when present —
-            # the same pattern api_vetting_trigger uses. Without this the
-            # Verifile submission included every default check (Sanctions,
-            # Social Media etc.) even when the engagement only wanted a
-            # subset, which is what the user saw: OS1 displaying 5
-            # required checks but Verifile processing 6.
+            # Send the UNION of engagement + role/job vetting_requirements so
+            # the Verifile submission matches what staff see on the candidate
+            # profile (engagement is the base layer; the role can add
+            # specific extras on top). Falls back to the full default list
+            # only when neither row sets anything.
             checks_to_trigger = DEFAULT_VETTING_CHECKS
             try:
                 appn = s.scalar(
@@ -22898,17 +22956,24 @@ def start_vetting_with_email(cand_id):
                     .where(Application.candidate_id == cand_id)
                     .order_by(Application.created_at.desc())
                 )
+                _required = set()
                 if appn and appn.job_id:
                     _job = s.get(Job, appn.job_id)
                     if _job and _job.engagement_id:
                         _eng = s.get(Engagement, _job.engagement_id)
                         if _eng and _eng.vetting_requirements:
                             _eng_checks = json.loads(_eng.vetting_requirements)
-                            if isinstance(_eng_checks, list) and _eng_checks:
-                                checks_to_trigger = _eng_checks
+                            if isinstance(_eng_checks, list):
+                                _required.update(_eng_checks)
+                    if _job and getattr(_job, "vetting_requirements", None):
+                        _job_checks = json.loads(_job.vetting_requirements)
+                        if isinstance(_job_checks, list):
+                            _required.update(_job_checks)
+                if _required:
+                    checks_to_trigger = sorted(_required)
             except Exception:
                 current_app.logger.exception(
-                    "start-vetting: engagement requirements lookup failed for cand %s", cand_id
+                    "start-vetting: engagement/role requirements lookup failed for cand %s", cand_id
                 )
 
             existing = {
@@ -22992,21 +23057,33 @@ def api_vetting_trigger(cand_id):
             .order_by(Application.created_at.desc())
         )
 
-        # Determine which checks apply based on engagement vetting requirements
+        # Determine which checks apply: UNION of engagement + role/job
+        # vetting_requirements so this matches what the candidate profile
+        # renders. Engagement is the base layer; the role can add extras.
         checks_to_trigger = DEFAULT_VETTING_CHECKS
         engagement_ref = None
         if appn and appn.job_id:
             job = s.get(Job, appn.job_id)
+            required = set()
             if job and job.engagement_id:
                 engagement = s.get(Engagement, job.engagement_id)
                 if engagement and engagement.vetting_requirements:
                     try:
                         eng_checks = json.loads(engagement.vetting_requirements)
-                        if isinstance(eng_checks, list) and eng_checks:
-                            checks_to_trigger = eng_checks
+                        if isinstance(eng_checks, list):
+                            required.update(eng_checks)
                             engagement_ref = engagement.ref
                     except (json.JSONDecodeError, TypeError):
                         pass
+            if job and getattr(job, "vetting_requirements", None):
+                try:
+                    job_checks = json.loads(job.vetting_requirements)
+                    if isinstance(job_checks, list):
+                        required.update(job_checks)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            if required:
+                checks_to_trigger = sorted(required)
 
         existing = {
             vc.check_type: vc
@@ -23297,8 +23374,11 @@ def api_vetting_reset_current(cand_id):
 @login_required
 def api_vetting_reset(cand_id):
     """Reset vetting checks for a candidate back to NOT STARTED.
-    If check_types provided in JSON body, only reset those specific checks (current project).
-    Otherwise resets all checks."""
+    If check_types provided in JSON body, only reset those specific checks.
+    Otherwise resets only the checks that are currently required for this
+    candidate (engagement ∪ job vetting_requirements on the latest
+    application) — matches what's rendered on /candidate/<id>. Legacy
+    rows from retired check types or prior engagements are left alone."""
     with Session(engine) as s:
         cand = s.get(Candidate, cand_id)
         if not cand:
@@ -23307,9 +23387,33 @@ def api_vetting_reset(cand_id):
         data = request.get_json(silent=True) or {}
         check_types = data.get("check_types", [])
 
-        query = select(VettingCheck).where(VettingCheck.candidate_id == cand_id)
-        if check_types:
-            query = query.where(VettingCheck.check_type.in_(check_types))
+        if not check_types:
+            required = set()
+            latest_app = s.scalar(
+                select(Application)
+                .where(Application.candidate_id == cand_id)
+                .order_by(Application.created_at.desc())
+            )
+            if latest_app and latest_app.job_id:
+                job = s.get(Job, latest_app.job_id)
+                if job and job.engagement_id:
+                    eng = s.get(Engagement, job.engagement_id)
+                    if eng and eng.vetting_requirements:
+                        required.update(from_json_safe(eng.vetting_requirements or "[]"))
+                if job and getattr(job, "vetting_requirements", None):
+                    required.update(from_json_safe(job.vetting_requirements or "[]"))
+            check_types = sorted(
+                c for c in required
+                if c not in ("Employment History", "Address History")
+            )
+            if not check_types:
+                return jsonify({"ok": False, "error": "No vetting requirements set for this candidate"}), 400
+
+        query = (
+            select(VettingCheck)
+            .where(VettingCheck.candidate_id == cand_id)
+            .where(VettingCheck.check_type.in_(check_types))
+        )
 
         checks = s.scalars(query).all()
 
@@ -25372,21 +25476,17 @@ def candidate_profile(cand_id: int):
         except Exception:
             pass
 
-        # Build vetting requirements list. The engagement is the
-        # authoritative source — when set, ONLY its checks display.
-        # Previously this UNIONed engagement + job which meant editing
-        # the engagement to remove a check did nothing on the candidate
-        # profile if the Job row still carried it (the user's reported
-        # case: 3 ticked on the engagement, 5 still showing on the
-        # candidate profile). Falling back to job vetting_requirements
-        # only when the engagement is empty preserves the legacy /
-        # job-only configuration path.
+        # Build vetting requirements list as the UNION of the engagement's
+        # checks and the role/job's checks. The engagement is the base
+        # layer; the role can add specific extras on top. If staff want a
+        # check removed for a candidate they should untick it on whichever
+        # row carries it — both rows are editable.
         # Req 26 — drop any retired check types still stored in older
         # engagement/job vetting_requirements JSON so they cannot reappear.
         required_vetting_checks = set()
         if engagement and engagement.vetting_requirements:
             required_vetting_checks.update(from_json_safe(engagement.vetting_requirements))
-        elif job and getattr(job, 'vetting_requirements', None):
+        if job and getattr(job, 'vetting_requirements', None):
             required_vetting_checks.update(from_json_safe(job.vetting_requirements))
         required_vetting_checks = sorted(
             c for c in required_vetting_checks

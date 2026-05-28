@@ -1614,10 +1614,16 @@ def personal_details():
             profile.country = _sanitise(request.form.get("country", "United Kingdom"))
             # Req 26 — Scotland answer drives the DBS criminal-record variant.
             _scotland = (request.form.get("current_address_in_scotland", "") or "").strip().lower()
-            profile.current_address_in_scotland = (
+            _scotland_val = (
                 True if _scotland == "yes"
                 else (False if _scotland == "no" else None)
             )
+            profile.current_address_in_scotland = _scotland_val
+            # Clear the staff-side "associate must confirm Scotland" flag
+            # once they've answered either way. Staff can re-trigger Start
+            # Vetting and the package will now route correctly.
+            if _scotland_val is not None and getattr(cand, "needs_scotland_address_confirmation", False):
+                cand.needs_scotland_address_confirmation = False
             profile.contact_number = _sanitise(request.form.get("contact_number", ""))
             profile.emergency_contact_name = _sanitise(request.form.get("emergency_contact_name", ""))
             profile.emergency_contact_phone = _sanitise(request.form.get("emergency_contact_phone", ""))

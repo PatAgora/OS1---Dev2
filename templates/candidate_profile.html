@@ -1427,6 +1427,22 @@
             </div>
           </div>
 
+          {% if cand.needs_scotland_address_confirmation %}
+          <div class="alert alert-warning d-flex align-items-start mb-3" role="alert" style="font-size: 0.875rem;">
+            <i class="fas fa-exclamation-triangle me-2 mt-1"></i>
+            <div>
+              <strong>Verifile package on hold.</strong>
+              DBS Check + Credit Check have not been submitted because the
+              associate has not yet confirmed whether their current address
+              is in Scotland. Sending the package needs that flag set so the
+              correct regional bundle (Package A / Package B) is used — and
+              the right Scotland DBS variant is selected. Ask {{ cand.name }}
+              to update their Personal Details on the Associate Portal, then
+              re-run Start Vetting.
+            </div>
+          </div>
+          {% endif %}
+
           {# Action bar #}
           <div class="mb-3 p-2 rounded" style="background: #f1f5f9;">
             <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
@@ -3041,7 +3057,7 @@ function syncVerifile(candidateId) {
 }
 
 function resetVettingAll(candidateId) {
-  if (!confirm('Reset all vetting checks to Not Started? This will clear all vetting progress for this candidate.')) return;
+  if (!confirm('Reset the vetting checks shown above to Not Started? This will clear progress for the checks currently required by this candidate\'s engagement/role.')) return;
   fetch('/api/vetting/reset/' + candidateId, {
     method: 'POST',
     headers: {

@@ -120,6 +120,17 @@
                     <input type="text" id="country" name="country" class="form-control" value="{{ profile.country if profile and profile.country else 'United Kingdom' }}">
                 </div>
                 <div class="col-md-12">
+                    {% if associate and associate.needs_scotland_address_confirmation %}
+                    <div class="alert alert-warning d-flex align-items-start py-2" role="alert" style="font-size: 0.875rem;">
+                        <i class="fas fa-exclamation-triangle me-2 mt-1"></i>
+                        <div>
+                            <strong>Action required.</strong>
+                            We need your answer to the question below to start your DBS
+                            and Credit checks. Please confirm whether your current home
+                            address is in Scotland and save the page.
+                        </div>
+                    </div>
+                    {% endif %}
                     <label class="form-label">Is your current home address in Scotland? <span class="text-danger">*</span></label>
                     <div class="d-flex gap-4 mt-1">
                         <div class="form-check">
