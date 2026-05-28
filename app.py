@@ -3516,6 +3516,112 @@ def _vat_band_label(treatment: str) -> str:
     }.get(treatment, f"Expenses ({treatment})")
 
 
+def _reset_consent_and_declarations_for_new_engagement(session, candidate_id, new_engagement_id):
+    """Req 32 — when a candidate's first application against a NEW
+    engagement is created, the consent + declaration forms reset so the
+    associate has to re-sign them for the new application. The prior
+    placement snapshot (and the unchanged AuditLog / CandidateNote /
+    Document records) preserve the audit history of what was signed
+    last time.
+
+    No-op when the candidate has been on this engagement before — same
+    engagement = same consent envelope, no need to re-sign.
+    """
+    if not (candidate_id and new_engagement_id):
+        return False
+    try:
+        prior = session.execute(text("""
+            SELECT 1
+            FROM applications a
+            JOIN jobs j ON j.id = a.job_id
+            WHERE a.candidate_id = :cid
+              AND j.engagement_id = :eid
+            LIMIT 1
+        """), {"cid": candidate_id, "eid": new_engagement_id}).first()
+    except Exception:
+        prior = None
+    if prior:
+        return False  # not a new engagement for this candidate
+
+    cand = session.get(Candidate, candidate_id)
+    if cand is None:
+        return False
+
+    reset_fields = [
+        "employment_ref_declaration_signed",
+        "secondary_job_declaration_signed",
+        "secondary_job_has_secondary",
+        "umbrella_assignment_sent",
+        "umbrella_assignment_signed",
+    ]
+    for _f in reset_fields:
+        if hasattr(cand, _f):
+            setattr(cand, _f, False)
+    reset_ts_fields = [
+        "employment_ref_declaration_signed_at",
+        "secondary_job_declaration_signed_at",
+        "conduct_regs_decision_at",
+        "umbrella_assignment_sent_at",
+        "umbrella_assignment_signed_at",
+        "intro_to_vetting_sent_at",
+    ]
+    for _f in reset_ts_fields:
+        if hasattr(cand, _f):
+            setattr(cand, _f, None)
+    reset_str_fields = [
+        "secondary_job_title",
+        "secondary_job_signed_name",
+        "conduct_regs_signed_name",
+    ]
+    for _f in reset_str_fields:
+        if hasattr(cand, _f):
+            setattr(cand, _f, "")
+    if hasattr(cand, "conduct_regs_opted_in"):
+        cand.conduct_regs_opted_in = None
+
+    # Delete the consent record so the next portal visit prompts a
+    # fresh consent capture. The prior consent is still recorded in
+    # the PlacementSnapshot of the previous placement + via the
+    # consent_signed Document.
+    try:
+        session.execute(
+            text("DELETE FROM consent_records WHERE candidate_id = :cid"),
+            {"cid": candidate_id},
+        )
+    except Exception:
+        current_app.logger.exception(
+            "consent reset: DELETE FROM consent_records failed for cand %s", candidate_id
+        )
+
+    # Activity feed + audit log entries.
+    try:
+        session.add(CandidateNote(
+            candidate_id=candidate_id,
+            user_email="System",
+            note_type="activity",
+            content=(
+                "Consent + declaration forms reset for new engagement "
+                "application. The associate will be prompted to re-sign "
+                "the Employment Reference Declaration, Secondary Job "
+                "Declaration, Conduct Regulations decision, and consent "
+                "form for this engagement."
+            ),
+            created_at=datetime.datetime.utcnow(),
+        ))
+    except Exception:
+        pass
+    try:
+        log_audit_event(
+            "update", "compliance",
+            "Consent + declarations reset on new-engagement application",
+            "candidate", candidate_id,
+            {"new_engagement_id": new_engagement_id},
+        )
+    except Exception:
+        pass
+    return True
+
+
 def _take_placement_snapshot(session, candidate_id, application_id):
     """Req 32 — frozen audit snapshot of the candidate-level state at
     the moment of a placement. Captures the things that should NOT
@@ -30079,6 +30185,15 @@ def api_engagement_shortlist(eng_id: int):
                 "application_id": existing_app.id
             })
         else:
+            # Req 32 — if this is the candidate's first application on
+            # this engagement, reset consent + declarations so they
+            # re-sign for the new application. Runs BEFORE creating the
+            # Application so the "has any prior app on this engagement"
+            # check is accurate.
+            _reset_consent_and_declarations_for_new_engagement(
+                s, candidate_id, eng_id,
+            )
+
             # Create new application with Shortlist status
             new_app = Application(
                 candidate_id=candidate_id,
@@ -35066,6 +35181,15 @@ def add_candidate_to_job_pipeline():
         if existing:
             flash(f"{candidate.name} is already in the pipeline for \u201c{job.title}\u201d.", "info")
         else:
+            # Req 32 \u2014 first application on a new engagement resets the
+            # consent + declaration forms. No-op if the candidate has
+            # been on this engagement before.
+            eng_id_for_vc = job.engagement_id if job.engagement_id else None
+            if eng_id_for_vc:
+                _reset_consent_and_declarations_for_new_engagement(
+                    s, candidate.id, eng_id_for_vc,
+                )
+
             new_app = Application(
                 candidate_id=candidate.id,
                 job_id=job.id,
@@ -35075,7 +35199,6 @@ def add_candidate_to_job_pipeline():
             s.add(new_app)
 
             # Contradiction Fix 1: Auto-create vetting checks (status=WAITING FOR ASSOCIATE)
-            eng_id_for_vc = job.engagement_id if job.engagement_id else None
             _auto_create_vetting_checks(s, candidate.id, eng_id_for_vc)
 
             # Update candidate last activity
