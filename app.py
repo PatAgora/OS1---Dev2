@@ -18949,9 +18949,36 @@ def create_engagement():
             # allocate sequential OS### reference
             new_ref = _next_engagement_ref(s)
 
-            # Collect vetting check checkboxes as JSON list
+            # Collect vetting check checkboxes as JSON list.
+            # Mandatory: at least one check must be picked — otherwise
+            # Start Vetting would silently create zero VettingCheck rows
+            # for any associate on this engagement.
             vetting_checks_selected = request.form.getlist("vetting_check")
-            vetting_req_json = json.dumps(vetting_checks_selected) if vetting_checks_selected else "[]"
+            if not vetting_checks_selected:
+                flash(
+                    "Pick at least one vetting check — engagements can't be saved with no vetting requirements.",
+                    "warning",
+                )
+                # Re-render with the same vetting-profile dropdown the
+                # normal GET path serves so the warning lands in context.
+                _vp_list_err = []
+                try:
+                    with Session(engine) as _svp_err:
+                        _vp_list_err = [
+                            {"id": vp.id, "name": vp.name, "checks": from_json_safe(vp.checks or "[]")}
+                            for vp in _svp_err.scalars(
+                                select(VettingProfile).order_by(VettingProfile.name)
+                            ).all()
+                        ]
+                except Exception:
+                    pass
+                return render_template(
+                    "create_engagement.html",
+                    form=form,
+                    selected_checks=[],
+                    vetting_profiles=_vp_list_err,
+                )
+            vetting_req_json = json.dumps(vetting_checks_selected)
 
             # Contradiction Fix 5: Parse reference period (default 3 years)
             ref_period = 3
@@ -19020,9 +19047,65 @@ def engagement_edit(eng_id):
             engagement.end_date = parse_date_dmy(form.end_date.data)
             engagement.sow_signed_at = parse_date_dmy(form.sow_signed_at.data)
             engagement.description = form.description.data or ""
-            # Collect vetting check checkboxes as JSON list
+            # Collect vetting check checkboxes as JSON list. Mandatory:
+            # at least one check must be picked — otherwise Start Vetting
+            # silently creates zero VettingCheck rows for any associate
+            # on this engagement.
             vetting_checks_selected = request.form.getlist("vetting_check")
-            engagement.vetting_requirements = json.dumps(vetting_checks_selected) if vetting_checks_selected else "[]"
+            if not vetting_checks_selected:
+                flash(
+                    "Pick at least one vetting check — engagements can't be saved with no vetting requirements.",
+                    "warning",
+                )
+                return redirect(url_for("engagement_edit", eng_id=eng_id))
+            # Capture the BEFORE list so we can reconcile candidate rows
+            # for checks that are newly required.
+            try:
+                _prev_reqs = set(from_json_safe(engagement.vetting_requirements) or [])
+            except Exception:
+                _prev_reqs = set()
+            engagement.vetting_requirements = json.dumps(vetting_checks_selected)
+            _new_reqs = set(vetting_checks_selected)
+            _newly_required = _new_reqs - _prev_reqs
+            # Reconcile candidate rows on this engagement. For every
+            # associate whose existing VettingCheck row for a now-newly-
+            # required check is N/A (stamped by an earlier Start Vetting
+            # under the old config), flip it back to NOT STARTED so it
+            # appears on the candidate profile as outstanding work. Don't
+            # touch In Progress / Complete / Failed rows — preserve
+            # active state. Best-effort: log + continue on failure.
+            if _newly_required:
+                try:
+                    _cand_ids = [
+                        row[0] for row in s.execute(text(
+                            "SELECT DISTINCT a.candidate_id "
+                            "FROM applications a JOIN jobs j ON j.id = a.job_id "
+                            "WHERE j.engagement_id = :eid"
+                        ).bindparams(eid=eng_id)).all() if row[0]
+                    ]
+                    flipped = 0
+                    for _cid in _cand_ids:
+                        for _ct in _newly_required:
+                            _vc = s.scalar(
+                                select(VettingCheck)
+                                .where(VettingCheck.candidate_id == _cid)
+                                .where(VettingCheck.check_type == _ct)
+                            )
+                            if _vc and (_vc.status or "").upper() == "N/A":
+                                _vc.status = "NOT STARTED"
+                                _vc.notes = ""
+                                _vc.completed_at = None
+                                flipped += 1
+                    if flipped:
+                        current_app.logger.info(
+                            "engagement %s vetting_requirements update: "
+                            "re-opened %s candidate row(s) for newly-required checks: %s",
+                            eng_id, flipped, sorted(_newly_required),
+                        )
+                except Exception:
+                    current_app.logger.exception(
+                        "engagement %s: vetting-row reconcile failed", eng_id
+                    )
             # Contradiction Fix 5: Save reference period
             try:
                 rp = int(form.reference_period_years.data or 3)
