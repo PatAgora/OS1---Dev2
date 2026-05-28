@@ -3706,15 +3706,37 @@ def _lock_history_on_placement(session, candidate_id, application_id):
 
 
 def _current_engagement_id(session, candidate_id):
-    """Req 32 — return the engagement_id from the candidate's latest
-    application that has an engagement-linked job. Used to scope
-    VettingCheck + ReferenceRequest rows on the candidate profile and
-    when stamping new rows so re-applications get a fresh page. Returns
-    None when the candidate has no engagement-linked application.
+    """Req 32 — return the engagement_id of the candidate's current
+    engagement. Mirrors the candidate_profile view's `latest_app`
+    resolution: prefer applications in an active status (Placed /
+    Contract Signed / Contract Sent / On Assignment / Accepted /
+    Offered / Ready to Contract), fall back to the most recent
+    application of any status. Without this active-status preference
+    the helper and the view could pick different engagements when a
+    candidate has both a Placed application and a newer non-active
+    one — causing vetting updates to land on the wrong engagement
+    (the row would then appear in the Archive section instead of the
+    live Vetting tile).
     """
     if not (session and candidate_id):
         return None
     try:
+        active_first = session.execute(text("""
+            SELECT j.engagement_id
+            FROM applications a
+            JOIN jobs j ON j.id = a.job_id
+            WHERE a.candidate_id = :cid
+              AND j.engagement_id IS NOT NULL
+              AND a.status IN (
+                'Placed', 'Contract Signed', 'Contract Sent',
+                'On Assignment', 'Accepted', 'Offered',
+                'Ready to Contract'
+              )
+            ORDER BY a.created_at DESC
+            LIMIT 1
+        """), {"cid": candidate_id}).first()
+        if active_first:
+            return active_first[0]
         row = session.execute(text("""
             SELECT j.engagement_id
             FROM applications a
