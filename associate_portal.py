@@ -5520,6 +5520,21 @@ def vacancy_apply(job_id):
                 s.add(doc)
 
         if Application:
+            # Req 32 — first application on this engagement resets the
+            # consent + declaration forms so the associate has to
+            # re-sign for the new engagement. No-op when this engagement
+            # was already in play for this candidate. Imported lazily
+            # to avoid a circular import at module load time.
+            try:
+                from app import _reset_consent_and_declarations_for_new_engagement
+                _eng_for_reset = getattr(job, "engagement_id", None)
+                if _eng_for_reset:
+                    _reset_consent_and_declarations_for_new_engagement(
+                        s, cand_id, _eng_for_reset,
+                    )
+            except Exception as _e:
+                print(f"[PORTAL] Req 32 reset failed (non-fatal): {_e}", flush=True)
+
             app = Application(
                 candidate_id=cand_id,
                 job_id=job_id,

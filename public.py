@@ -812,6 +812,26 @@ def job_apply_post(job_id: int):
             app_obj = existing
             app_id = existing.id
         else:
+            # Req 32 — first application on this engagement resets the
+            # consent + declaration forms so the candidate is prompted
+            # to re-sign for the new engagement. No-op when this
+            # engagement was already in play. Lazy import to avoid a
+            # circular import at module load time.
+            try:
+                from app import _reset_consent_and_declarations_for_new_engagement
+                _eng_for_reset = getattr(job, "engagement_id", None)
+                if _eng_for_reset:
+                    _reset_consent_and_declarations_for_new_engagement(
+                        s, cand.id, _eng_for_reset,
+                    )
+            except Exception as _e:
+                try:
+                    current_app.logger.exception(
+                        "[PUBLIC] Req 32 reset failed (non-fatal): %s", _e
+                    )
+                except Exception:
+                    pass
+
             app_obj = Application(
                 candidate_id=cand.id,
                 job_id=job.id,

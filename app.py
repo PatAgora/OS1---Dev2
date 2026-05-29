@@ -3526,25 +3526,63 @@ def _reset_consent_and_declarations_for_new_engagement(session, candidate_id, ne
 
     No-op when the candidate has been on this engagement before — same
     engagement = same consent envelope, no need to re-sign.
+
+    Logs verbose telemetry at each branch so we can see in Railway logs
+    whether the helper fired and which path it took.
     """
     if not (candidate_id and new_engagement_id):
+        try:
+            current_app.logger.info(
+                "[REQ32 reset] SKIP — missing args cand=%s eng=%s",
+                candidate_id, new_engagement_id,
+            )
+        except Exception:
+            pass
         return False
     try:
+        # Active-status-only guard: stale Rejected / Withdrawn / Closed
+        # apps from earlier testing must not block a fresh reset.
         prior = session.execute(text("""
-            SELECT 1
+            SELECT a.id, a.status
             FROM applications a
             JOIN jobs j ON j.id = a.job_id
             WHERE a.candidate_id = :cid
               AND j.engagement_id = :eid
+              AND a.status NOT IN ('Rejected', 'Withdrawn', 'Closed')
             LIMIT 1
         """), {"cid": candidate_id, "eid": new_engagement_id}).first()
     except Exception:
         prior = None
+        current_app.logger.exception(
+            "[REQ32 reset] guard query failed for cand=%s eng=%s",
+            candidate_id, new_engagement_id,
+        )
     if prior:
+        try:
+            current_app.logger.info(
+                "[REQ32 reset] NO-OP cand=%s eng=%s — prior app id=%s status=%s on this engagement",
+                candidate_id, new_engagement_id, prior[0], prior[1],
+            )
+        except Exception:
+            pass
         return False  # not a new engagement for this candidate
+
+    try:
+        current_app.logger.info(
+            "[REQ32 reset] PROCEED cand=%s eng=%s — no prior non-terminal app, wiping declarations",
+            candidate_id, new_engagement_id,
+        )
+    except Exception:
+        pass
 
     cand = session.get(Candidate, candidate_id)
     if cand is None:
+        try:
+            current_app.logger.warning(
+                "[REQ32 reset] cand=%s not found, aborting", candidate_id,
+            )
+        except Exception:
+            pass
         return False
 
     reset_fields = [
@@ -3633,6 +3671,20 @@ def _reset_consent_and_declarations_for_new_engagement(session, candidate_id, ne
         )
     except Exception:
         pass
+    # Flush the SQL changes so the deletes + field resets are visible
+    # within this session before the outer handler commits. Without
+    # this, a later error in the same handler could roll back the
+    # reset without us noticing.
+    try:
+        session.flush()
+        current_app.logger.info(
+            "[REQ32 reset] DONE cand=%s eng=%s — consent + declaration tables wiped, candidate fields reset, session flushed",
+            candidate_id, new_engagement_id,
+        )
+    except Exception:
+        current_app.logger.exception(
+            "[REQ32 reset] flush failed for cand=%s eng=%s", candidate_id, new_engagement_id,
+        )
     return True
 
 
