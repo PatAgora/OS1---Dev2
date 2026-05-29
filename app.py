@@ -8489,6 +8489,13 @@ def offer_capture(cand_id: int):
                 .order_by(Application.created_at.desc())
             )
             if latest_app is None and request.method == "POST":
+                # Req 32 — first application on this engagement resets
+                # the consent + declaration forms.
+                _eng_id_for_offer = getattr(target_job, "engagement_id", None)
+                if _eng_id_for_offer:
+                    _reset_consent_and_declarations_for_new_engagement(
+                        s, cand_id, _eng_id_for_offer,
+                    )
                 latest_app = Application(
                     candidate_id=cand_id,
                     job_id=target_job.id,
@@ -20510,6 +20517,15 @@ def apply(token):
             )
             s.add(doc)
             s.flush()
+
+            # Req 32 — first application on this engagement resets the
+            # consent + declaration forms. No-op if the candidate has
+            # been on this engagement before.
+            _new_eng_id_for_apply = job.engagement_id if getattr(job, "engagement_id", None) else None
+            if _new_eng_id_for_apply:
+                _reset_consent_and_declarations_for_new_engagement(
+                    s, cand.id, _new_eng_id_for_apply,
+                )
 
             # 5️⃣ Create new application
             appn = Application(
@@ -35157,6 +35173,14 @@ def bulk_shortlist():
             )
             if existing:
                 continue
+
+            # Req 32 — reset consent + declarations when this is the
+            # candidate's first application on this engagement.
+            _eng_for_bulk = getattr(job, "engagement_id", None)
+            if _eng_for_bulk:
+                _reset_consent_and_declarations_for_new_engagement(
+                    s, int(cid), _eng_for_bulk,
+                )
 
             app_new = Application(
                 candidate_id=int(cid),
