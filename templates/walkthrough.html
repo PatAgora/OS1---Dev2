@@ -516,6 +516,21 @@
         </div>
         <p>Utility buttons: <strong>"Select All"</strong> / <strong>"Clear All"</strong> for bulk toggle.</p>
 
+        <div class="wt-gate">
+          <i class="fas fa-exclamation-circle"></i>
+          <div>
+            <strong>At least one check is required.</strong> Trying to save a project with no checks ticked returns a warning and the form is not saved. This stops "Start Vetting" from silently producing zero checks for an associate later.
+          </div>
+        </div>
+
+        <div class="wt-sub-heading">Billing &mdash; details inherited from the Client</div>
+        <p>The Billing card on the project edit page is where the invoice address, VAT number, company registration number, and the list of invoice recipient email addresses are captured. If the project's Client has billing defaults already saved (on <strong>/admin/clients/&lt;id&gt;/edit</strong>), the project edit page pre-fills the blank fields automatically:</p>
+        <ul class="wt-field-list">
+          <li>A small blue alert appears at the top of the Billing card: <em>"Some fields below are pre-filled from the linked Client. Editing here saves a per-project override."</em></li>
+          <li>Saving without editing writes the inherited Client values to the project row, so the data is materialised at save time.</li>
+          <li>To override a single field for just this project, type over the value and save &mdash; only that one field deviates from the Client default; everything else continues to inherit.</li>
+        </ul>
+
         <div class="wt-sub-heading">Button</div>
         <p>Click <strong>"Create Project"</strong> (new) or <strong>"Save Changes"</strong> (editing).</p>
 
@@ -650,15 +665,21 @@
         <p>Drag application cards between columns. Stage transitions are controlled by ALLOWED_TRANSITIONS rules (prevents invalid jumps). Exception: staff can force-skip with confirmation.</p>
 
         <div class="wt-sub-heading">Kanban Action Buttons</div>
-        <p>Each card has quick-action buttons that open the same forms as the candidate profile:</p>
+        <p>Each card has quick-action buttons that open the same forms as the candidate profile. The seven navigation actions (everything except in-place stage moves like Pass I&amp;A) <strong>open in a new browser tab</strong> so the workflow column stays in view while staff finish the task elsewhere. The button tooltips say "(opens in new tab)" to signal this before clicking.</p>
         <table class="wt-detail-table">
           <tr><th>Button</th><th>Stage</th><th>What It Does</th></tr>
-          <tr><td><i class="fas fa-calendar-plus text-primary me-1"></i> Schedule Interview</td><td>Shortlist / I&amp;A</td><td>Opens the candidate profile with the interview form focused and ready to fill</td></tr>
-          <tr><td><i class="fas fa-hand-holding-usd text-success me-1"></i> Make Offer</td><td>Client Review</td><td>Opens the Offer Capture Sheet directly (same as "Send to Offer" on candidate profile)</td></tr>
-          <tr><td><i class="fas fa-envelope text-info me-1"></i> Start Referencing</td><td>All stages</td><td>Opens the candidate profile and triggers the referencing confirmation automatically</td></tr>
-          <tr><td><i class="fas fa-shield-alt text-warning me-1"></i> Start Full Vetting</td><td>All stages</td><td>Opens the candidate profile and the vetting email preview modal pops up automatically</td></tr>
-          <tr><td><i class="fas fa-file-signature text-success me-1"></i> Issue Contract</td><td>Ready to Contract</td><td>Opens the Assignment Schedule Capture Sheet directly (same as "Issue Contract" on candidate profile)</td></tr>
+          <tr><td><i class="fas fa-user text-primary me-1"></i> View Profile</td><td>Any</td><td>Opens the candidate profile in a new tab.</td></tr>
+          <tr><td><i class="fas fa-briefcase text-secondary me-1"></i> View Job</td><td>Any</td><td>Opens the linked Job in a new tab.</td></tr>
+          <tr><td><i class="fas fa-calendar-plus text-primary me-1"></i> Schedule Interview</td><td>Shortlist / I&amp;A</td><td>Opens the candidate profile with the interview form focused and ready to fill. New tab.</td></tr>
+          <tr><td><i class="fas fa-clipboard-check text-success me-1"></i> Pass I&amp;A</td><td>I&amp;A</td><td>In-place state transition &mdash; advances to Client Review without leaving the workflow.</td></tr>
+          <tr><td><i class="fas fa-hand-holding-usd text-success me-1"></i> Make Offer</td><td>Client Review</td><td>Opens the Offer Capture Sheet in a new tab (same as "Send to Offer" on candidate profile).</td></tr>
+          <tr><td><i class="fas fa-envelope text-info me-1"></i> Start Referencing</td><td>All stages</td><td>Opens the candidate profile in a new tab and triggers the referencing confirmation automatically.</td></tr>
+          <tr><td><i class="fas fa-shield-alt text-warning me-1"></i> Start Full Vetting</td><td>All stages</td><td>Opens the candidate profile in a new tab and the vetting email preview modal pops up automatically.</td></tr>
+          <tr><td><i class="fas fa-file-signature text-success me-1"></i> Issue Contract</td><td>Ready to Contract</td><td>Opens the Assignment Schedule Capture Sheet in a new tab (same as "Issue Contract" on candidate profile).</td></tr>
         </table>
+
+        <div class="wt-sub-heading">Vetting badge on the kanban card</div>
+        <p>Each card shows a small "N/M complete" vetting badge. The count is scoped to the <strong>current project's</strong> vetting checks only &mdash; not the cumulative total across every project the associate has ever been on. If a candidate has been placed before, the previous project's checks live in the Archive section of their profile and do not inflate this badge.</p>
 
         <div class="wt-gate">
           <i class="fas fa-lock"></i>
@@ -705,20 +726,26 @@
           <i class="fas fa-cog me-1"></i>
           <strong>System:</strong> Application status updates to <strong>"I&amp;A"</strong>. Interview date/time stored on the Application record.
         </div>
-        <p>An <strong>email preview modal</strong> pops up automatically, pre-loaded with the Interview Invitation template (Config C4). Staff can:</p>
+
+        <div class="wt-sub-heading">Teams meeting auto-created (when Microsoft 365 is connected)</div>
+        <p>If the OS1 Microsoft 365 connection is enabled, scheduling an interview also creates a real Outlook calendar event with a Microsoft Teams meeting attached. The candidate and the interviewer receive the meeting invite straight into their Outlook calendar, complete with a one-click "Join Teams meeting" link &mdash; no manual link pasting needed. Any files uploaded in the Attachments field ride along on the calendar event so the candidate gets the JD or briefing pack with the invite.</p>
+        <p>If the Microsoft 365 connection isn't available (for example a staff member logged in with an account that isn't a real Optimus mailbox), OS1 falls back to a plain email with an .ics calendar attachment and shows a yellow flash message explaining the exact reason &mdash; so staff can troubleshoot without needing developer support.</p>
+
+        <div class="wt-sub-heading">Email preview modal (for the standalone "Send Interview Email")</div>
+        <p>A separate <strong>"Send Interview Email"</strong> modal is available for cases where staff want to send a follow-up or a tailored message. Staff can:</p>
         <ul class="wt-field-list">
-          <li>Review and edit the email subject and body</li>
-          <li><span class="field-name">Paste a Teams meeting link</span> into the email body</li>
-          <li>Add file attachments (JD, CV, briefing docs)</li>
+          <li>Review and edit the email subject and body (signature appended automatically, branded with the associates@optimussolutions.co.uk address)</li>
+          <li>Add multiple file attachments &mdash; the "Add another file" button stacks rows so several documents can ride along, not just one</li>
+          <li>Set the meeting Location (Teams link, in-person address, or hybrid)</li>
           <li>Click <strong>"Send Interview Invitation"</strong> to dispatch</li>
         </ul>
 
         <div class="wt-sub-heading">Interview History</div>
-        <p>The Interview section on the candidate profile shows all interviews across all applications, each displaying:</p>
+        <p>The Interview section on the candidate profile shows the candidate's interviews for their <strong>current project</strong>. Interviews from previous projects are moved to the Archive tile (see Staff Step 16) so the live tile stays focused on what's happening now. Each row displays:</p>
         <ul class="wt-field-list">
           <li><span class="field-name">Role &mdash; Project name</span> for each interview</li>
-          <li><span class="field-name">Date and time</span> of the interview</li>
-          <li><span class="field-name">Status badge:</span> blue "Scheduled" or green "Completed"</li>
+          <li><span class="field-name">Date and time</span> of the interview, plus a "Join Teams meeting" link if Microsoft 365 created one</li>
+          <li><span class="field-name">Status badge:</span> blue "Scheduled", green "Pass", red "Fail" / "No Show", or grey "Completed"</li>
         </ul>
 
         <div class="wt-sub-heading">Rescheduling</div>
@@ -940,17 +967,52 @@
           <strong>Associate portal:</strong> At <strong>/portal/vetting-progress</strong>, the associate sees a progress bar (e.g. "4/12 Complete") and an accordion with information about each check type. They also receive direct contact from Verifile for DBS, Right to Work, and Credit Check steps.
         </div>
 
+        <div class="wt-sub-heading">Which checks come from the project</div>
+        <p>The Vetting Checks tile on the candidate profile only shows the checks the project actually needs. The "needed" list is the union of:</p>
+        <ul class="wt-field-list">
+          <li><span class="field-name">Project vetting requirements</span> &mdash; the boxes ticked on <strong>/engagement/&lt;id&gt;/edit</strong> &rarr; Vetting Requirements section. This is the base layer.</li>
+          <li><span class="field-name">Role vetting requirements</span> &mdash; any extra boxes ticked on the specific Job. Adds to the base layer; it does not replace it.</li>
+        </ul>
+        <p>What the staff member sees on the candidate profile is exactly what Start Full Vetting will send to Verifile. If staff want a check removed for a candidate, they untick it on whichever row carries it (project or role) and save.</p>
+
+        <div class="wt-gate">
+          <i class="fas fa-lock"></i>
+          <div>
+            Start Full Vetting only runs for candidates whose latest application is in <strong>Accepted</strong> or <strong>Offer Accepted</strong> status. If they're at an earlier stage the button returns an error telling staff to move the application forward first. This gate stops vetting from being kicked off prematurely.
+          </div>
+        </div>
+
         <div class="wt-sub-heading">Integration: Verifile</div>
         <div style="background: #ede9fe; border: 1px solid #c4b5fd; border-radius: 8px; padding: 0.6rem 0.85rem; margin: 0.5rem 0; font-size: 0.8rem;">
           <i class="fas fa-plug me-1" style="color: #7c3aed;"></i>
-          <strong>Verifile API:</strong> DBS screening orders created automatically using the DBS criteria configured on the job (Level, Sector, Purpose, Position, Employer Name). Verifile contacts the associate directly for identity verification documents.
+          <strong>Verifile API:</strong> Screening orders are placed automatically when staff press Start Full Vetting. Manual checks (References, Qualifications, Professional Registration, Directorship) are never sent to Verifile &mdash; they stay on the OS1 tile as manual work for the analyst. The other six map to Verifile products: DBS, Identity Verification, Right to Work, Credit Check, Sanctions / PEP, Social Media Review.
         </div>
+
+        <div class="wt-sub-heading">Verifile packages (Package A &amp; Package B)</div>
+        <p>Verifile pre-priced packages bundle two checks together at a lower combined cost than ordering them individually. OS1 sends the package automatically when both bundled checks are required and the associate's region is known:</p>
+        <ul class="wt-field-list">
+          <li><span class="field-name">Package A &mdash; Criminal and Credit (England &amp; Wales)</span> &mdash; sent when the associate's "current home address is in Scotland?" answer is <strong>No</strong> and both DBS + Credit are required.</li>
+          <li><span class="field-name">Package B &mdash; DBS, Credit and Right to Work (Scotland)</span> &mdash; sent when the answer is <strong>Yes</strong> and both DBS + Credit are required.</li>
+          <li>If only one of DBS / Credit is required (or the associate hasn't answered the Scotland question yet), OS1 sends the relevant check(s) individually rather than the package. This avoids over-charging by paying for a bundled check that isn't needed.</li>
+        </ul>
+
+        <div class="wt-gate">
+          <i class="fas fa-pause-circle"></i>
+          <div>
+            <strong>Scotland flag missing:</strong> if the associate has not yet answered "Is your current home address in Scotland?" on their Personal Details page <strong>and</strong> both DBS + Credit are required, OS1 will NOT submit those two checks to Verifile (sending them blind would over-charge the client and could pick the wrong DBS variant). They are parked as <em>Awaiting Associate</em> with a note. A yellow banner appears at the top of the Vetting Checks tile on the candidate profile telling staff to ask the associate to update their profile. Other Verifile-eligible checks (Identity, Right to Work, Sanctions, Social Media) still go through normally.
+          </div>
+        </div>
+
         <p>When Verifile completes a check, a webhook at <strong>/webhook/verifile</strong> updates the candidate profile automatically:</p>
         <ul class="wt-field-list">
           <li>A purple <strong>"Verifile &mdash; Complete"</strong>, <strong>"Verifile &mdash; Passed"</strong>, or <strong>"Verifile &mdash; Failed"</strong> flag appears on the check tile with the confirmation date</li>
           <li>The check status auto-updates to match the Verifile result &mdash; but only if staff hasn't already manually advanced the status past it</li>
           <li>The staff status dropdown remains the primary status driver &mdash; the Verifile flag is an independent confirmation that sits alongside the manual status</li>
+          <li>When the full Verifile order completes, the combined PDF report is fetched and stored automatically. A "Download Verifile report" link appears in the Vetting Checks tile.</li>
         </ul>
+
+        <div class="wt-sub-heading">Carry-over between projects</div>
+        <p>When a candidate has been placed before and Start Full Vetting is pressed for a new project, OS1 checks each required check for a previous <em>Complete</em> result that's still inside its expiry window. Any that are still in date are seeded on the new project as <strong>Check Still In Date</strong> with a note like "Carried over from project X (originally completed DD MMM)". Verifile is not re-ordered for those rows. See Staff Step 16 for the full picture.</p>
       </div>
     </div>
 
@@ -1060,6 +1122,7 @@
             <li>Candidate status &rarr; <strong>"On Contract"</strong> (or "On Assignment")</li>
             <li>Candidate appears in the <strong>Placements page</strong> (<strong>/placements</strong>) with a <strong>Vetting Status</strong> column showing: Not Started, In Progress, Complete, or "Expiring in X days" (if any check expires within 40 days)</li>
             <li><strong>Portal applications blocked:</strong> The associate can no longer apply for new roles via the portal. If they try, they see: <em>"Please contact an Optimus representative to discuss your application."</em> Staff can re-enable applications from <strong>Admin &rarr; Portal User Management</strong>.</li>
+            <li><strong>Placement audit event fires:</strong> a Placement Snapshot is taken (declarations, address history, HMRC record link, umbrella sign status, all frozen for audit recall) and the current employment history + reference rows are stamped as locked at this moment. See Staff Step 16 for the audit story.</li>
           </ul>
         </div>
 
@@ -1177,6 +1240,160 @@
           <tr><td><i class="fas fa-lock me-1"></i> <strong>Block Applications</strong></td><td>Applications currently enabled</td><td>Prevents the associate from applying for new roles on the portal. Automatically applied when a contract is signed.</td></tr>
           <tr><td><i class="fas fa-unlock me-1"></i> <strong>Re-enable Applications</strong></td><td>Applications currently blocked</td><td>Allows the associate to apply for roles again (e.g. after a contract ends). Logged in the audit trail.</td></tr>
         </table>
+      </div>
+    </div>
+
+    <!-- ==================== STAFF STEP 16: RE-APPLICATIONS & AUDIT ==================== -->
+    <div class="wt-step border-staff" onclick="toggleStep(this)">
+      <div class="wt-step-header">
+        <span class="wt-step-num num-staff">16</span>
+        <span class="wt-step-title"><i class="fas fa-history me-2"></i>Re-applications, Placement Snapshots &amp; the Archive</span>
+        <span class="wt-step-badge badge-staff">STAFF</span>
+        <i class="fas fa-chevron-down wt-step-chevron"></i>
+      </div>
+      <div class="wt-step-body">
+        <p>When an associate who has been placed before applies to a role on a new project, OS1 keeps the audit history of the previous placement and gives the new project a fresh page to work through. Here is what staff need to know.</p>
+
+        <div class="wt-sub-heading">The placement event</div>
+        <p>The moment an application moves to <strong>Placed</strong> (either by drag-and-drop on the workflow board or by the signed contract being uploaded), OS1 does three things automatically:</p>
+        <ul class="wt-field-list">
+          <li><span class="field-name">Locks employment history and reference rows.</span> A small grey padlock appears on the staff side next to each row, with a tooltip showing the date of the placement. <em>Note:</em> the lock is informational only &mdash; the associate can still edit anything on their portal if they need to correct it for the next application.</li>
+          <li><span class="field-name">Takes a Placement Snapshot.</span> A frozen audit record of what was true at that moment: every declaration the associate had signed, the consent record, the umbrella assignment, the HMRC employment record link, and the full address history. The snapshot is stored even if the associate later edits the live values on their portal.</li>
+          <li><span class="field-name">Writes an Activity Feed entry</span> on the candidate profile so the placement is visible in the activity timeline.</li>
+        </ul>
+
+        <div class="wt-sub-heading">What happens when they re-apply</div>
+        <p>When an associate who has already been placed applies to a job on a <strong>different</strong> project, OS1 treats it as a fresh start for that new project:</p>
+        <table class="wt-detail-table">
+          <tr><th>Item</th><th>What happens on the new project</th></tr>
+          <tr><td>Vetting checks</td><td>Reset to <em>Not Started</em>. If a previous check is still in date (e.g. a DBS done 6 months ago is still inside its 12-month window), that one is auto-marked <em>Check Still In Date</em> with a note saying "Carried over from project X". Other checks need re-running.</td></tr>
+          <tr><td>Consent + declarations</td><td>Cleared. The associate is prompted to re-sign Employment Reference Declaration, Secondary Job Declaration, Conduct Regulations decision, and the consent form for the new project.</td></tr>
+          <tr><td>HMRC employment record</td><td>Cleared. The associate is prompted to upload a fresh HMRC record for the new project.</td></tr>
+          <tr><td>Umbrella assignment</td><td>Cleared, ready for the new project.</td></tr>
+          <tr><td>Employment history</td><td>Carries forward. The associate does not re-enter their work history &mdash; rows from previous placements stay live and the associate can add new ones on top.</td></tr>
+          <tr><td>References (already received)</td><td>Carries forward. Any references already collected stay on the timeline so the associate doesn't have to re-collect them.</td></tr>
+          <tr><td>Address history</td><td>Carries forward (live values from the portal). The previous placement's address snapshot is preserved in that placement's snapshot record.</td></tr>
+          <tr><td>Personal details, CV, ID documents</td><td>Carry forward &mdash; identity doesn't change between projects.</td></tr>
+        </table>
+
+        <div class="wt-mirror-box">
+          <i class="fas fa-user-tie me-1"></i>
+          <strong>Same project, different role:</strong> If the associate applies to a different role on the <em>same</em> project they're already on, nothing resets &mdash; same project means same consent envelope and the declarations are still valid.
+        </div>
+
+        <div class="wt-sub-heading">The Archive section on the candidate profile</div>
+        <p>Navigate to <strong>/candidate/&lt;id&gt;</strong> &mdash; scroll past the References tile and you will see an <strong>Archive &mdash; Previous Engagements</strong> tile, collapsed by default. Click the header to expand.</p>
+        <p>Inside, each previous project is shown as a card containing:</p>
+        <ul class="wt-field-list">
+          <li><span class="field-name">Interviews</span> &mdash; the interview row(s) from that project (Role / Scheduled / Completed / Outcome). Read-only.</li>
+          <li><span class="field-name">Vetting checks</span> &mdash; the actual checks that were worked on for that project (N/A checks and untouched rows are filtered out so the archive only shows what mattered). Status, completion date, notes. Read-only.</li>
+          <li><span class="field-name">Reference requests</span> &mdash; rows from that project's referencing run, including the recipient email, status, sent / received dates, and a link to download the reply email if one was uploaded.</li>
+          <li><span class="field-name">Placement snapshot</span> &mdash; a sub-card showing the badges and dates for the declarations + the address history at the moment of that placement.</li>
+        </ul>
+        <p>The archive is read-only by design. It exists for audit recall &mdash; nothing in it can be edited.</p>
+
+        <div class="wt-gate">
+          <i class="fas fa-info-circle"></i>
+          <div>
+            The Archive only shows projects that are <strong>not</strong> the candidate's current project. If the candidate has only ever been on one project, the Archive tile will be empty until they apply to a second one.
+          </div>
+        </div>
+
+        <div class="wt-sub-heading">What this means for billing &amp; timesheets</div>
+        <p>Billing and timesheets are tied to whichever project is active right now. Past placements stay in the historic invoices and historic timesheets &mdash; no automatic carry-over of money owed or hours billed. A new placement starts fresh from its effective start date.</p>
+      </div>
+    </div>
+
+    <!-- ==================== STAFF STEP 17: INVOICING ==================== -->
+    <div class="wt-step border-staff" onclick="toggleStep(this)">
+      <div class="wt-step-header">
+        <span class="wt-step-num num-staff">17</span>
+        <span class="wt-step-title"><i class="fas fa-file-invoice-dollar me-2"></i>Invoicing</span>
+        <span class="wt-step-badge badge-staff">STAFF</span>
+        <i class="fas fa-chevron-down wt-step-chevron"></i>
+      </div>
+      <div class="wt-step-body">
+        <div class="wt-sub-heading">Where</div>
+        <p>Navigate to <strong>/admin/invoices</strong>. The page has two main areas: the <strong>Ready to Generate</strong> tile at the top, and the <strong>All Invoices</strong> table below.</p>
+
+        <div class="wt-sub-heading">Ready to Generate tile</div>
+        <p>Shows each (project, month) pair where all the month's timesheets have been approved and an invoice has not yet been raised. Each row tells staff: project ref, period (e.g. 2026-05), number of approved timesheets, expected total. Staff can only press <strong>"Generate"</strong> when the expected coverage is complete &mdash; if any timesheet for that period is still Draft, Submitted, or Rejected, the tile shows a "Waiting" message instead of the button. This stops a partial invoice being raised when the engagement isn't ready.</p>
+        <p>Once an invoice has been generated for a (project, month), that row disappears from the Ready to Generate tile. It only reappears if the invoice is deleted or voided.</p>
+
+        <div class="wt-sub-heading">All Invoices table</div>
+        <p>The table lists every invoice ever raised, with columns:</p>
+        <table class="wt-detail-table">
+          <tr><th>Column</th><th>What it shows</th></tr>
+          <tr><td>Invoice #</td><td>The generated invoice number (e.g. INV-2026-05-00009-AGO &mdash; year, month, sequence, client code)</td></tr>
+          <tr><td>Project</td><td>Project ref &mdash; client name</td></tr>
+          <tr><td>Invoice Period</td><td>The month the invoice covers</td></tr>
+          <tr><td>Invoice Date</td><td>The date the invoice was issued. Editable.</td></tr>
+          <tr><td>Due Date</td><td>Auto-set from the project's payment terms.</td></tr>
+          <tr><td>Total</td><td>Gross amount including VAT.</td></tr>
+          <tr><td>Outstanding</td><td>Unpaid balance &mdash; same as Total until the invoice is marked Paid.</td></tr>
+          <tr><td>Status</td><td>Draft / Sent / Paid / Overdue / Void.</td></tr>
+          <tr><td>Actions</td><td>Send email, Edit, Download, Mark Paid, Void.</td></tr>
+        </table>
+
+        <div class="wt-sub-heading">Status flow</div>
+        <table class="wt-detail-table">
+          <tr><th>Status</th><th>When it applies</th><th>Buttons available</th></tr>
+          <tr><td><strong>Draft</strong></td><td>Generated but not yet sent.</td><td>Send email, Edit, Download, Void.</td></tr>
+          <tr><td><strong>Sent</strong></td><td>Send email pressed &mdash; PDF dispatched to recipients.</td><td>Resend, Mark Paid, Void.</td></tr>
+          <tr><td><strong>Paid</strong></td><td>Marked Paid by staff.</td><td>None &mdash; all action buttons (Send, Edit, Void) are hidden so a paid invoice can't be accidentally re-issued.</td></tr>
+          <tr><td><strong>Overdue</strong></td><td>Sent but past the due date and not paid.</td><td>Resend, Mark Paid, Void.</td></tr>
+          <tr><td><strong>Void</strong></td><td>Cancelled by staff.</td><td>None &mdash; voided invoices stay in the listing for the audit trail.</td></tr>
+        </table>
+
+        <div class="wt-sub-heading">Generating an invoice</div>
+        <p>Click <strong>"Generate"</strong> on a Ready to Generate row. OS1 builds the invoice from the approved timesheets for that (project, month):</p>
+        <ul class="wt-field-list">
+          <li>Each associate's billable days are looked up against their charge rate (configured per role on the project's Engagement Plan).</li>
+          <li>Expenses approved on the timesheets are grouped by category, then sub-detailed per associate per week on Page 2 of the PDF.</li>
+          <li>VAT is calculated using the configured VAT bands.</li>
+          <li>The PDF is saved against the invoice row; staff are redirected back to the All Invoices listing.</li>
+        </ul>
+
+        <div class="wt-sub-heading">Editing an invoice</div>
+        <p>Click <strong>"Edit"</strong> on a Draft invoice. The edit page exposes:</p>
+        <ul class="wt-field-list">
+          <li><span class="field-name">Invoice Date</span> &mdash; editable (defaults to the day the invoice was generated)</li>
+          <li><span class="field-name">PO Number</span> &mdash; saved against the project so future invoices for the same project inherit it</li>
+          <li><span class="field-name">Line items</span> &mdash; can be added / removed manually (overrides flagged if changed from auto-calculated values)</li>
+          <li><span class="field-name">VAT bands</span> &mdash; can be overridden if the standard rate doesn't apply</li>
+        </ul>
+        <p>Saving regenerates the PDF.</p>
+
+        <div class="wt-sub-heading">Sending an invoice</div>
+        <p>Click <strong>"Send Email"</strong>. A modal pops up pre-filled with:</p>
+        <ul class="wt-field-list">
+          <li><span class="field-name">To</span> &mdash; recipient emails from the project's billing list (which itself inherits from the Client if blank).</li>
+          <li><span class="field-name">Subject</span> &mdash; e.g. "Invoice INV-2026-05-00009-AGO &mdash; [Project Name] &mdash; May 2026".</li>
+          <li><span class="field-name">Body</span> &mdash; the configured invoice email template (Configuration C4).</li>
+          <li><span class="field-name">Attachment</span> &mdash; the invoice PDF.</li>
+        </ul>
+        <p>Staff can edit any of the fields before pressing Send. The invoice status flips to <strong>Sent</strong> automatically; the audit trail records who sent it and when. Resending uses the same PDF and is logged as a separate audit event.</p>
+
+        <div class="wt-sub-heading">Voiding an invoice</div>
+        <p>Click <strong>"Void"</strong>. A warning dialog appears confirming the action and reminding staff to consider whether the client needs to be informed or a replacement invoice raised. The invoice stays in the listing with a Void badge so the audit trail is intact.</p>
+
+        <div class="wt-sub-heading">Downloading invoices for a project</div>
+        <p>The Project Dashboard (<strong>/engagement/&lt;id&gt;/dashboard</strong>) has a <strong>"Download all invoices"</strong> button in the header. Pressing it zips every invoice PDF raised for the project and downloads it in one go &mdash; handy when an engagement closes and staff need a single archive of everything billed.</p>
+
+        <div class="wt-sub-heading">Invoice PDF layout</div>
+        <ul class="wt-field-list">
+          <li><span class="field-name">Header</span> &mdash; Optimus logo (with the brand-blue background matching the sidebar) and the Optimus billing block (from Configuration).</li>
+          <li><span class="field-name">Client block</span> &mdash; pulls from the linked Client's billing details, with any per-project overrides applied.</li>
+          <li><span class="field-name">Line items</span> &mdash; one line per associate per week, showing their <strong>actual role title</strong> (e.g. "Team Leader", "Officer") &mdash; not "Day Rate" &mdash; plus the charge rate, days billed, and total.</li>
+          <li><span class="field-name">Expenses</span> &mdash; grouped by category with sub-rows showing per-associate / per-week breakdown.</li>
+          <li><span class="field-name">VAT</span> &mdash; calculated per VAT band.</li>
+          <li><span class="field-name">Page 2 Schedule</span> &mdash; the full detail of every billable line, mirrored on-screen on the invoice view page.</li>
+        </ul>
+
+        <div class="wt-mirror-box">
+          <i class="fas fa-check-circle me-1"></i>
+          <strong>Client view:</strong> the invoice the client receives is the same PDF that's stored on the invoice record. The Optimus signature in the email is from <strong>finance@optimussolutions.co.uk</strong>.
+        </div>
       </div>
     </div>
 
@@ -1465,7 +1682,24 @@
           <tr><td>City *</td><td>Text</td><td>Town or city</td></tr>
           <tr><td>Postcode *</td><td>Text</td><td>UK postcode</td></tr>
           <tr><td>Country</td><td>Text</td><td>Default: United Kingdom</td></tr>
+          <tr><td>Date you moved in *</td><td>Date picker</td><td>The date the associate moved into the address above. Used to work out how much of the 5-year address history is already covered by the current address.</td></tr>
+          <tr><td>Is your current home address in Scotland? *</td><td>Yes / No</td><td>Required for DBS Check routing. <strong>Yes</strong> sends the Scotland-variant DBS through Verifile; <strong>No</strong> sends the England &amp; Wales variant.</td></tr>
         </table>
+
+        <div class="wt-sub-heading">Previous Addresses (5-year coverage)</div>
+        <p>Below the current address fields, a <strong>Previous addresses</strong> block lets the associate add every earlier address until they reach a total of 5 years (60 months). A live coverage badge in the corner shows progress:</p>
+        <ul class="wt-field-list">
+          <li><span class="field-name">Grey badge</span> &mdash; 0 months. Move-in date not yet entered.</li>
+          <li><span class="field-name">Orange badge</span> &mdash; some progress (e.g. "32 / 60 months covered"). Warning visible reminding them to add another previous address.</li>
+          <li><span class="field-name">Green badge</span> &mdash; 60 months or more covered. Warning disappears.</li>
+        </ul>
+        <p>Each previous address row asks for: Address line 1 / 2, City, Postcode, Country, From date, To date. Click <strong>"Add a previous address"</strong> to add another row. The X button at the top-right of each row removes it. Coverage recalculates on every date change.</p>
+        <p>Saving works even if the 5-year minimum isn't met &mdash; the page shows a warning but the data is kept so the associate can come back later to add more.</p>
+
+        <div class="wt-mirror-box">
+          <i class="fas fa-user-tie me-1"></i>
+          <strong>Staff portal:</strong> The address history shown on the candidate profile's <em>Address History</em> tile reads from the same data. Every row entered here appears there, with a coverage indicator that flips green when 5 years is reached. Verifile uses the postcodes from credit-check results to tick off addresses that have been independently confirmed.
+        </div>
 
         <div class="wt-sub-heading">Date of Birth</div>
         <table class="wt-detail-table">
@@ -1632,10 +1866,19 @@
           <tr><td>Consent Form</td><td><strong>/portal/consent-form</strong></td><td>Authorises Optimus to perform background checks (DBS, credit, employment verification)</td><td>Blue button (unsigned) &rarr; Green button with checkmark (signed)</td></tr>
           <tr><td>Declaration</td><td><strong>/portal/declaration</strong></td><td>Discloses any criminal convictions, CCJs, IVAs, bankruptcy, or other relevant history</td><td>Blue &rarr; Green</td></tr>
           <tr><td>Secondary Job Declaration</td><td><strong>/portal/secondary-job-declaration</strong></td><td>Confirms whether the associate has any secondary employment that may conflict</td><td>Blue &rarr; Green</td></tr>
+          <tr><td>Conduct Regulations 2003 Decision</td><td><strong>/portal/conduct-regulations</strong></td><td>The associate confirms whether they want to be covered by the Conduct of Employment Agencies and Employment Businesses Regulations 2003. Captured per project.</td><td>Blue &rarr; Green</td></tr>
           <tr><td>Employment Reference Declaration</td><td><strong>/portal/employment-reference-declaration</strong></td><td>Authorises Optimus to contact previous employers for references. <strong>Must be signed before referencing can begin (gate).</strong></td><td>Blue &rarr; Green</td></tr>
           <tr><td>Employment History</td><td><strong>/portal/references/employment</strong></td><td>Complete 5-year employment history (see Associate Step 3)</td><td>Blue &rarr; Green</td></tr>
+          <tr><td>HMRC Employment Record</td><td><strong>/portal/references/employment</strong> (within the Declarations card)</td><td>Upload the completed HMRC New Starter Checklist / employment record as a PDF or DOC. Replaces the legacy "email it to compliance@" step &mdash; the upload is captured directly so staff can download it from the candidate profile.</td><td>"Upload HMRC record" button &rarr; "Replace" once a file is on record</td></tr>
           <tr><td>Documents</td><td><strong>/portal/documents</strong></td><td>Upload required documents (ID, proof of address, certificates)</td><td>Blue &rarr; Green</td></tr>
         </table>
+
+        <div class="wt-gate">
+          <i class="fas fa-exclamation-circle"></i>
+          <div>
+            <strong>On a new application to a different project:</strong> the Consent Form, Declaration, Secondary Job Declaration, Conduct Regulations decision and the HMRC Employment Record are all <strong>reset</strong> and need to be completed again for the new project. Employment history, references already collected, and identity / ID documents carry forward unchanged. See <em>Staff Step 16 &mdash; Re-applications, Placement Snapshots &amp; the Archive</em> for the full picture.
+          </div>
+        </div>
 
         <div class="wt-sub-heading">Vetting Progress Page</div>
         <p>Below the forms, the associate sees:</p>
