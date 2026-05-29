@@ -11033,7 +11033,7 @@ class Engagement(Base):
     # Gap plan 8.3: Client-specific document requirements (JSON list of doc types)
     required_documents = Column(Text, nullable=True)  # JSON: ["proof_of_id", "proof_of_address", ...]
     # Gap plan P9: Reference period configurable per client (default 3 years)
-    reference_period_years = Column(Integer, default=3)
+    reference_period_years = Column(Integer, default=5)
     # Third pass fix 6: Gap threshold days configurable per client (default 90)
     gap_threshold_days = Column(Integer, default=90)
 
@@ -12830,7 +12830,7 @@ def ensure_schema():
                 pass
 
         # -- Engagements additions --
-        for coldef in ["required_documents TEXT", "reference_period_years INTEGER DEFAULT 3"]:
+        for coldef in ["required_documents TEXT", "reference_period_years INTEGER DEFAULT 5"]:
             try:
                 conn.execute(text(f"ALTER TABLE engagements ADD COLUMN {coldef}"))
             except Exception:
@@ -14993,7 +14993,7 @@ class EngagementForm(FlaskForm):
     description = TextAreaField("Description", validators=[WTOptional()])
     vetting_requirements = TextAreaField("Vetting Requirements", validators=[WTOptional()])
     # Contradiction Fix 5: Configurable reference period per engagement
-    reference_period_years = StringField("Reference Period (years)", validators=[WTOptional()], default="3")
+    reference_period_years = StringField("Reference Period (years)", validators=[WTOptional()], default="5")
 
 class JobForm(FlaskForm):
     engagement_id = SelectField("Engagement", coerce=int, validators=[DataRequired()])
@@ -19664,7 +19664,7 @@ def create_engagement():
             # Contradiction Fix 5: Parse reference period (default 3 years)
             ref_period = 3
             try:
-                ref_period = int(form.reference_period_years.data or 3)
+                ref_period = int(form.reference_period_years.data or 5)
                 if ref_period < 1 or ref_period > 10:
                     ref_period = 3
             except (ValueError, TypeError):
@@ -19789,10 +19789,10 @@ def engagement_edit(eng_id):
                     )
             # Contradiction Fix 5: Save reference period
             try:
-                rp = int(form.reference_period_years.data or 3)
-                engagement.reference_period_years = rp if 1 <= rp <= 10 else 3
+                rp = int(form.reference_period_years.data or 5)
+                engagement.reference_period_years = rp if 1 <= rp <= 10 else 5
             except (ValueError, TypeError):
-                engagement.reference_period_years = 3
+                engagement.reference_period_years = 5
             # Phase 5 — re-resolve the Client link when the client name
             # changes. If the name moves to a different existing Client the
             # FK swaps; if it's brand new an unconfirmed Client is created.
@@ -19816,7 +19816,7 @@ def engagement_edit(eng_id):
             form.sow_signed_at.data = engagement.sow_signed_at.strftime("%d-%m-%Y") if engagement.sow_signed_at else ""
             form.description.data = engagement.description
             form.vetting_requirements.data = engagement.vetting_requirements or ""
-            form.reference_period_years.data = str(getattr(engagement, 'reference_period_years', 3) or 3)
+            form.reference_period_years.data = str(getattr(engagement, 'reference_period_years', 5) or 5)
 
     # Pre-parse vetting_requirements JSON server-side (see comment in create_engagement)
     selected_checks = from_json_safe(form.vetting_requirements.data or "")
@@ -26024,7 +26024,7 @@ def _compute_verifile_preflight(s, cand_id: int, engagement=None):
         blk.append("No employment history entries in Portal")
     else:
         eyrs = total_emp_days / 365.0
-        target = (getattr(engagement, "reference_period_years", 3) or 3) if engagement else 3
+        target = (getattr(engagement, "reference_period_years", 5) or 5) if engagement else 5
         if eyrs < target:
             wrn.append(f"Only {eyrs:.1f} yrs employment (engagement wants {target})")
         else:
