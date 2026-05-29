@@ -3655,7 +3655,21 @@ def _take_placement_snapshot(session, candidate_id, application_id):
             .where(PlacementSnapshot.application_id == application_id)
         )
         if existing:
-            return existing
+            # Old-format snapshots (taken before declarations were
+            # restructured to mirror the live Declarations tile) had
+            # flat keys like `employment_ref_signed`. The new format
+            # nests under `consent_form` / `declaration` / etc. If the
+            # existing row is the old format, drop it so the backfill
+            # re-captures with the new structure.
+            try:
+                _existing_payload = json.loads(existing.payload or "{}")
+                _decs = _existing_payload.get("declarations") or {}
+                if "consent_form" in _decs:
+                    return existing
+            except Exception:
+                pass
+            session.delete(existing)
+            session.flush()
     except Exception:
         existing = None
     try:
@@ -3711,46 +3725,104 @@ def _take_placement_snapshot(session, candidate_id, application_id):
     except Exception:
         pass
 
+    # Pull the ConsentRecord + DeclarationRecord so the snapshot mirrors
+    # the live "Declarations" tile exactly (same 5 items in the same
+    # order, same labels, same Confirmed / Not Confirmed wording).
+    consent_payload = {
+        "consent_given": False,
+        "signed_date": None,
+        "legal_name": "",
+        "reference_consent": False,
+        "secondary_employment": False,
+        "secondary_employment_details": "",
+    }
+    try:
+        _cr = session.execute(text(
+            "SELECT consent_given, signed_date, legal_name, reference_consent, "
+            "       secondary_employment, secondary_employment_details "
+            "FROM consent_records WHERE candidate_id = :cid LIMIT 1"
+        ).bindparams(cid=candidate_id)).first()
+        if _cr:
+            consent_payload = {
+                "consent_given": bool(_cr[0]),
+                "signed_date": _iso(_cr[1]),
+                "legal_name": _cr[2] or "",
+                "reference_consent": bool(_cr[3]),
+                "secondary_employment": bool(_cr[4]),
+                "secondary_employment_details": _cr[5] or "",
+            }
+    except Exception:
+        pass
+
+    declaration_payload = {
+        "signed_date": None,
+        "legal_name": "",
+        "work_restrictions": None,
+        "criminal_convictions": None,
+        "ccj_debt": None,
+        "bankruptcy": None,
+        "dismissed": None,
+        "referencing_issues": None,
+    }
+    try:
+        _dr = session.execute(text(
+            "SELECT signed_date, legal_name, work_restrictions, criminal_convictions, "
+            "       ccj_debt, bankruptcy, dismissed, referencing_issues "
+            "FROM declaration_records WHERE candidate_id = :cid LIMIT 1"
+        ).bindparams(cid=candidate_id)).first()
+        if _dr:
+            declaration_payload = {
+                "signed_date": _iso(_dr[0]),
+                "legal_name": _dr[1] or "",
+                "work_restrictions": _dr[2],
+                "criminal_convictions": _dr[3],
+                "ccj_debt": _dr[4],
+                "bankruptcy": _dr[5],
+                "dismissed": _dr[6],
+                "referencing_issues": _dr[7],
+            }
+    except Exception:
+        pass
+
     payload = {
         "engagement_ref": eng_ref,
         "engagement_name": eng_name,
+        # Snapshot mirrors the LIVE Declarations tile's order + labels:
+        # 1. Consent Form
+        # 2. Declaration
+        # 3. Secondary Job Declaration
+        # 4. Conduct Regulations 2003
+        # 5. Employment Reference Declaration
+        # Umbrella assignment + HMRC record live beneath as supplementary
+        # audit data, not on the live tile but useful for recall.
         "declarations": {
-            "employment_ref_signed": bool(
-                getattr(cand, "employment_ref_declaration_signed", False)
-            ),
-            "employment_ref_signed_at": _iso(
-                getattr(cand, "employment_ref_declaration_signed_at", None)
-            ),
-            "secondary_job_signed": bool(
-                getattr(cand, "secondary_job_declaration_signed", False)
-            ),
-            "secondary_job_signed_at": _iso(
-                getattr(cand, "secondary_job_declaration_signed_at", None)
-            ),
-            "secondary_job_has_secondary": bool(
-                getattr(cand, "secondary_job_has_secondary", False)
-            ),
-            "secondary_job_title": getattr(cand, "secondary_job_title", "") or "",
-            "conduct_regs_opted_in": getattr(cand, "conduct_regs_opted_in", None),
-            "conduct_regs_decision_at": _iso(
-                getattr(cand, "conduct_regs_decision_at", None)
-            ),
-            "umbrella_assignment_sent": bool(
-                getattr(cand, "umbrella_assignment_sent", False)
-            ),
-            "umbrella_assignment_sent_at": _iso(
-                getattr(cand, "umbrella_assignment_sent_at", None)
-            ),
-            "umbrella_assignment_signed": bool(
-                getattr(cand, "umbrella_assignment_signed", False)
-            ),
-            "umbrella_assignment_signed_at": _iso(
-                getattr(cand, "umbrella_assignment_signed_at", None)
-            ),
-            "hmrc_record_doc_id": getattr(cand, "hmrc_record_doc_id", None),
-            "hmrc_record_uploaded_at": _iso(
-                getattr(cand, "hmrc_record_uploaded_at", None)
-            ),
+            "consent_form": consent_payload,
+            "declaration": declaration_payload,
+            "secondary_job": {
+                "signed": bool(getattr(cand, "secondary_job_declaration_signed", False)),
+                "signed_at": _iso(getattr(cand, "secondary_job_declaration_signed_at", None)),
+                "has_secondary": bool(getattr(cand, "secondary_job_has_secondary", False)),
+                "secondary_role_title": getattr(cand, "secondary_job_title", "") or "",
+            },
+            "conduct_regs_2003": {
+                "opted_in": getattr(cand, "conduct_regs_opted_in", None),
+                "decision_at": _iso(getattr(cand, "conduct_regs_decision_at", None)),
+                "signed_name": getattr(cand, "conduct_regs_signed_name", "") or "",
+            },
+            "employment_ref_declaration": {
+                "signed": bool(getattr(cand, "employment_ref_declaration_signed", False)),
+                "signed_at": _iso(getattr(cand, "employment_ref_declaration_signed_at", None)),
+            },
+            "umbrella_assignment": {
+                "sent": bool(getattr(cand, "umbrella_assignment_sent", False)),
+                "sent_at": _iso(getattr(cand, "umbrella_assignment_sent_at", None)),
+                "signed": bool(getattr(cand, "umbrella_assignment_signed", False)),
+                "signed_at": _iso(getattr(cand, "umbrella_assignment_signed_at", None)),
+            },
+            "hmrc_record": {
+                "doc_id": getattr(cand, "hmrc_record_doc_id", None),
+                "uploaded_at": _iso(getattr(cand, "hmrc_record_uploaded_at", None)),
+            },
         },
         "address_history": address_history,
         "candidate_status_at_placement": cand.status or "",
