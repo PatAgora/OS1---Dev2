@@ -2920,22 +2920,13 @@
                           {% endif %}
                         </td>
                       </tr>
-                      {# Supplementary audit items (not on the live tile but useful for recall) #}
-                      {% set ua = dec.umbrella_assignment or {} %}
-                      <tr>
-                        <th><i class="fas fa-umbrella me-2 text-muted"></i>Umbrella Assignment</th>
-                        <td>
-                          {% if ua.signed %}
-                            <span class="badge bg-success"><i class="fas fa-check-circle me-1"></i>Signed</span>
-                            {% if ua.signed_at %}<span class="text-muted small ms-2">{{ fmt_iso(ua.signed_at) }}</span>{% endif %}
-                          {% elif ua.sent %}
-                            <span class="badge bg-warning text-dark"><i class="fas fa-paper-plane me-1"></i>Sent &mdash; Awaiting</span>
-                            {% if ua.sent_at %}<span class="text-muted small ms-2">{{ fmt_iso(ua.sent_at) }}</span>{% endif %}
-                          {% else %}
-                            <span class="badge bg-secondary"><i class="fas fa-times-circle me-1"></i>Not Sent</span>
-                          {% endif %}
-                        </td>
-                      </tr>
+                      {# HMRC Employment Record is shown on the live tile below
+                         Employment History, so it stays in the snapshot for
+                         consistency with what staff see live. Umbrella
+                         Assignment was previously here as an audit-extra but
+                         it doesn't appear on the live Declarations tile (it's
+                         on the Contract card in the right sidebar) so it's
+                         been removed to avoid a mismatch. #}
                       {% set hr = dec.hmrc_record or {} %}
                       <tr>
                         <th><i class="fas fa-file-upload me-2 text-muted"></i>HMRC Employment Record</th>
