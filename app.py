@@ -7177,6 +7177,11 @@ def admin_clear_data_delete(entity: str):
                     "UPDATE vetting_check SET qc_assigned_to = NULL WHERE qc_assigned_to IN :ids",
                     "UPDATE vetting_check SET qc_reviewed_by = NULL WHERE qc_reviewed_by IN :ids",
                     "UPDATE vetting_check SET referral_approved_by = NULL WHERE referral_approved_by IN :ids",
+                    # Null the user_id FK on audit_logs rather than deleting the
+                    # rows — the audit history must survive a user delete.
+                    # user_email stays on the row so the audit trail still
+                    # identifies who took each action.
+                    "UPDATE audit_logs SET user_id = NULL WHERE user_id IN :ids",
                 ):
                     _safe(sql, params)
                 _safe("DELETE FROM engagement_approvers WHERE user_id IN :ids", params)
