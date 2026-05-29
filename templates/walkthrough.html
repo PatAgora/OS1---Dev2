@@ -241,6 +241,8 @@
         <a href="#section-staff"><i class="fas fa-user-tie"></i> Staff Operational Guide</a>
         <a href="#section-revenue"><i class="fas fa-pound-sign"></i> Revenue Tab</a>
         <a href="#section-associate"><i class="fas fa-user"></i> Associate Operational Guide</a>
+        <a href="#section-faq"><i class="fas fa-question-circle"></i> FAQ &amp; Troubleshooting</a>
+        <a href="#section-glossary"><i class="fas fa-book-open"></i> Glossary</a>
       </div>
     </div>
     <div class="wt-controls">
@@ -2038,6 +2040,346 @@
           <i class="fas fa-user-tie me-1"></i>
           <strong>Staff portal:</strong> Submitted timesheets appear at <strong>/admin/approvals</strong> for review. Staff can approve (green tick) or reject (red X with mandatory reason). Rejected reason is visible to the associate on their timesheet.
         </div>
+      </div>
+    </div>
+
+  </div>
+
+
+  <!-- ============================================================ -->
+  <!-- SECTION: FAQ & TROUBLESHOOTING                                -->
+  <!-- ============================================================ -->
+  <div id="section-faq">
+    <div class="wt-section-header">
+      <div class="icon-circle" style="background: linear-gradient(135deg, #7c3aed, #5b21b6);">
+        <i class="fas fa-question-circle"></i>
+      </div>
+      <div>
+        <h2>FAQ &amp; Troubleshooting</h2>
+        <p>Common questions grouped by topic. Click any card to expand.</p>
+      </div>
+    </div>
+
+    <!-- ============ FAQ — Projects, jobs & applications ============ -->
+    <div class="wt-step border-staff" onclick="toggleStep(this)">
+      <div class="wt-step-header">
+        <span class="wt-step-num num-staff">FAQ</span>
+        <span class="wt-step-title"><i class="fas fa-project-diagram me-2"></i>Projects, jobs &amp; applications</span>
+        <span class="wt-step-badge badge-staff">STAFF</span>
+        <i class="fas fa-chevron-down wt-step-chevron"></i>
+      </div>
+      <div class="wt-step-body">
+        <div class="wt-sub-heading">"Project" vs "engagement" &mdash; same thing?</div>
+        <p>Yes. The UI label is <strong>Project</strong>; the underlying database object is called <strong>Engagement</strong>. You'll see both words in places &mdash; they always refer to the same record (a piece of work for a client).</p>
+
+        <div class="wt-sub-heading">What's the difference between an Associate and a Candidate?</div>
+        <p>Same person, different stages of the relationship. <strong>Candidate</strong> tends to be used while they're in the recruitment pipeline (applying, interviewing). <strong>Associate</strong> is used once they're set up on the portal and active. The candidate profile URL (<strong>/candidate/&lt;id&gt;</strong>) works for both.</p>
+
+        <div class="wt-sub-heading">What happens if an associate applies to a new role on the same project?</div>
+        <p>Nothing resets. The candidate keeps the same vetting checks, consent record, declarations, and references because none of those need re-doing inside the same engagement. The new application appears in the workflow alongside the existing one.</p>
+
+        <div class="wt-sub-heading">What happens if an associate applies to a role on a different project?</div>
+        <p>The new project gets a fresh page:</p>
+        <ul class="wt-field-list">
+          <li>Vetting checks reset (with in-date carry-over for checks that haven't expired yet).</li>
+          <li>Consent + Declaration + Secondary Job + Conduct Regulations 2003 + Employment Reference Declaration all reset &mdash; the associate is prompted to re-sign for the new project.</li>
+          <li>HMRC Employment Record clears so they upload a fresh one.</li>
+          <li>Umbrella assignment clears, ready for the new project's umbrella set-up.</li>
+          <li>Employment history, references already collected, address history, CV, ID documents and personal details all carry forward. They don't need to be re-entered.</li>
+        </ul>
+        <p>The previous project's state is preserved in the Archive section of the candidate profile as a Placement Snapshot. See <em>Staff Step 16 &mdash; Re-applications, Placement Snapshots &amp; the Archive</em> for the full detail.</p>
+
+        <div class="wt-sub-heading">Why hasn't my Archive section appeared after a re-application?</div>
+        <p>The Archive only shows projects that aren't the candidate's current one. If the candidate has only ever been on one project, the Archive will be empty until they apply to a second one. Check the Activity Feed for a "Consent + declaration forms reset for new engagement application" entry &mdash; if you see that, the new application was correctly identified as being on a different engagement.</p>
+
+        <div class="wt-sub-heading">Why are there two Placement Snapshot cards inside one engagement bucket?</div>
+        <p>Fixed: the Archive now shows only the latest snapshot per engagement. If you saw duplicates earlier, that was a candidate with two Placed applications on the same engagement &mdash; both have a snapshot row in the database, but only the latest renders on the page now.</p>
+      </div>
+    </div>
+
+    <!-- ============ FAQ — Declarations & re-signing ============ -->
+    <div class="wt-step border-staff" onclick="toggleStep(this)">
+      <div class="wt-step-header">
+        <span class="wt-step-num num-staff">FAQ</span>
+        <span class="wt-step-title"><i class="fas fa-file-signature me-2"></i>Declarations, consent &amp; re-signing</span>
+        <span class="wt-step-badge badge-staff">STAFF</span>
+        <i class="fas fa-chevron-down wt-step-chevron"></i>
+      </div>
+      <div class="wt-step-body">
+        <div class="wt-sub-heading">Why do declarations need to be re-signed for a new project?</div>
+        <p>Each project has its own compliance context &mdash; different client, potentially different role, different regulatory expectations. Re-signing per project gives every project a fresh, signed-for-this-engagement record of consent, which is what an auditor expects to see when reviewing the placement.</p>
+
+        <div class="wt-sub-heading">If they're still on a project and apply for another role inside it, do they re-sign?</div>
+        <p>No. Same project = same consent envelope. The five declaration rows on their candidate profile stay signed.</p>
+
+        <div class="wt-sub-heading">Where can I see what was signed on the previous project?</div>
+        <p>On <strong>/candidate/&lt;id&gt;</strong>, scroll to the Archive section. Expand the prior project's card &mdash; the Placement snapshot block shows each declaration as Confirmed / Not Confirmed with the original signed date.</p>
+
+        <div class="wt-sub-heading">The Employment Reference Declaration was signed by the associate but the staff side shows Not Signed. Why?</div>
+        <p>Sometimes the Signable webhook doesn't fire because of a tenant misconfiguration. There's a small <strong>Update to signed</strong> button next to the Not Signed badge that admin staff can use to override the flag manually. The action is audit-logged and writes a CandidateNote so the activity feed records who flipped it and when.</p>
+
+        <div class="wt-sub-heading">Does the lock on Employment History block the associate from editing on their portal?</div>
+        <p>No &mdash; the lock is a staff-side audit marker only. A small grey padlock icon appears next to each employment row on the candidate profile to tell staff "this row was part of placement X". The associate can still edit, delete, or add entries from their portal at any time. The original placement-time state is preserved in the snapshot.</p>
+      </div>
+    </div>
+
+    <!-- ============ FAQ — Vetting ============ -->
+    <div class="wt-step border-staff" onclick="toggleStep(this)">
+      <div class="wt-step-header">
+        <span class="wt-step-num num-staff">FAQ</span>
+        <span class="wt-step-title"><i class="fas fa-shield-alt me-2"></i>Vetting</span>
+        <span class="wt-step-badge badge-staff">STAFF</span>
+        <i class="fas fa-chevron-down wt-step-chevron"></i>
+      </div>
+      <div class="wt-step-body">
+        <div class="wt-sub-heading">Which engagement decides what vetting checks are needed?</div>
+        <p>Both the engagement and the role. The required-checks list is the <strong>union</strong> of the project's vetting requirements (on <strong>/engagement/&lt;id&gt;/edit</strong>) and the role's vetting requirements (on the Job). The project is the base layer; the role can add extras on top. If staff want a check removed, they untick it on whichever row carries it.</p>
+
+        <div class="wt-sub-heading">My kanban card shows "13/13 vetting checks" but the candidate profile shows 3. Why?</div>
+        <p>Fixed in a recent update. The kanban card's count is now scoped to the candidate's current project only &mdash; not the cumulative total across every project they've ever been on. If you still see an inflated count, the candidate's previous project's checks may be carrying over via the cross-project view; redeploy or refresh and the count will rebalance.</p>
+
+        <div class="wt-sub-heading">What does the status "Check Still In Date" mean?</div>
+        <p>This check was Completed on a previous project and is still inside its validity window per the configured Vetting Expiry Periods (Configuration C1). OS1 auto-carries it forward to the new project as Check Still In Date so it doesn't get re-ordered to Verifile. Staff see the original completed date and a note saying "Carried over from project X".</p>
+
+        <div class="wt-sub-heading">What does "Awaiting Associate" mean for a vetting check?</div>
+        <p>OS1 needs information from the associate before it can send the check to Verifile. The most common reason: the associate hasn't yet confirmed whether their current home address is in Scotland, which determines which DBS variant gets requested. A yellow banner at the top of the Vetting Checks tile tells staff which associate-side action is needed and which checks are on hold because of it.</p>
+
+        <div class="wt-sub-heading">Why are some vetting checks marked N/A?</div>
+        <p>When staff press Start Full Vetting, OS1 checks every possible check type. Anything the project doesn't require is set to N/A with a note "Not required for this engagement" so it's clear staff don't need to action it. N/A checks don't count against the progress bar.</p>
+
+        <div class="wt-sub-heading">I updated a vetting status and saved, but the change isn't showing on the live tile.</div>
+        <p>Fixed. This was caused by the save writing to a row from a previous engagement. The update routes are now scoped to the candidate's current engagement so the change lands on the live row and reflects immediately. If you still see this, hard-refresh the page (Cmd-Shift-R) &mdash; your browser may have cached the previous state.</p>
+
+        <div class="wt-sub-heading">Start Full Vetting refuses with an error about Accepted / Offer Accepted.</div>
+        <p>By design. Start Full Vetting only runs when the candidate's latest application is in Accepted or Offer Accepted status. This stops vetting being kicked off before the candidate has confirmed they want the role. Move the application forward on the workflow board first.</p>
+      </div>
+    </div>
+
+    <!-- ============ FAQ — Verifile packages ============ -->
+    <div class="wt-step border-integ" onclick="toggleStep(this)">
+      <div class="wt-step-header">
+        <span class="wt-step-num num-integ">FAQ</span>
+        <span class="wt-step-title"><i class="fas fa-box me-2"></i>Verifile packages (A &amp; B)</span>
+        <span class="wt-step-badge badge-integ">INTEGRATION</span>
+        <i class="fas fa-chevron-down wt-step-chevron"></i>
+      </div>
+      <div class="wt-step-body">
+        <div class="wt-sub-heading">When does OS1 send Package A vs Package B vs individual checks?</div>
+        <ul class="wt-field-list">
+          <li><span class="field-name">Package A &mdash; Criminal and Credit (England &amp; Wales)</span> is sent when both DBS Check and Credit Check are required AND the associate's "current home address in Scotland?" answer is No.</li>
+          <li><span class="field-name">Package B &mdash; DBS, Credit and Right to Work (Scotland)</span> is sent when both DBS and Credit are required AND the Scotland answer is Yes.</li>
+          <li><span class="field-name">Individual checks</span> are sent when only one of DBS or Credit is required, or when the Scotland answer hasn't been given yet (see next item).</li>
+        </ul>
+
+        <div class="wt-sub-heading">What if the associate hasn't answered the Scotland question?</div>
+        <p>OS1 puts DBS + Credit on hold rather than sending them blindly. Sending the package without knowing the region would either over-charge (Package A when Scotland) or request the wrong DBS variant. Other Verifile-eligible checks (Identity, Right to Work, Sanctions, Social Media) still flow through normally. A yellow banner on the Vetting Checks tile explains the hold and tells staff to ask the associate to confirm their Scotland flag on Personal Details. The hold lifts automatically as soon as they answer.</p>
+
+        <div class="wt-sub-heading">Why was a package not used when both checks were required?</div>
+        <p>One of three reasons:</p>
+        <ul class="wt-field-list">
+          <li>Scotland flag wasn't set (see above).</li>
+          <li>The associate didn't have the full profile data needed for the package (e.g. missing DOB, missing address). In that case OS1 falls back to candidate-entry submission &mdash; Verifile asks the associate for the missing data via their portal.</li>
+          <li>The Verifile API rejected the package order (rare). OS1 logs the error and falls back to individual checks.</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- ============ FAQ — Invoicing & timesheets ============ -->
+    <div class="wt-step border-staff" onclick="toggleStep(this)">
+      <div class="wt-step-header">
+        <span class="wt-step-num num-staff">FAQ</span>
+        <span class="wt-step-title"><i class="fas fa-file-invoice-dollar me-2"></i>Invoicing &amp; timesheets</span>
+        <span class="wt-step-badge badge-staff">STAFF</span>
+        <i class="fas fa-chevron-down wt-step-chevron"></i>
+      </div>
+      <div class="wt-step-body">
+        <div class="wt-sub-heading">Why can't I generate an invoice yet?</div>
+        <p>The Ready to Generate tile only enables the Generate button when every timesheet for that (project, month) is Approved. If any are still Draft, Submitted, or Rejected, the row stays in a Waiting state. Find the outstanding timesheets in <strong>/admin/approvals</strong> and resolve them &mdash; the Generate button enables automatically.</p>
+
+        <div class="wt-sub-heading">Where do the invoice recipient emails come from?</div>
+        <p>Two layers. The project's Billing card on <strong>/engagement/&lt;id&gt;/edit</strong> has a Recipient Emails field. If that's blank, OS1 falls back to the linked Client's <strong>invoice_recipient_emails</strong> setting on <strong>/admin/clients/&lt;id&gt;/edit</strong>. The project edit page shows a small alert when fields are being inherited from the Client. Saving the project's billing form writes the inherited values back onto the project row so they're materialised.</p>
+
+        <div class="wt-sub-heading">Can I change the invoice address for one project without changing it globally?</div>
+        <p>Yes. Open the project edit page, change just the address fields you want different (or PO Number, VAT, recipient emails &mdash; any of them), and save. That project will use the overrides; every other project that's linked to the same Client continues to inherit the Client's defaults.</p>
+
+        <div class="wt-sub-heading">What happens when I void an invoice?</div>
+        <p>The invoice stays in the All Invoices listing with a Void badge so the audit trail is intact &mdash; voided invoices don't disappear from the table. The void action shows a warning dialog reminding staff to consider whether the client should be informed or a replacement invoice raised. Voided invoices have no action buttons available.</p>
+
+        <div class="wt-sub-heading">Can I download every invoice for a project in one go?</div>
+        <p>Yes. On the Project Dashboard (<strong>/engagement/&lt;id&gt;/dashboard</strong>), the header has a <strong>Download all invoices</strong> button. Pressing it zips every invoice PDF for the project into a single download.</p>
+
+        <div class="wt-sub-heading">Why does my invoice show "Day rate" instead of the role title?</div>
+        <p>Fixed. Invoice line items now show the associate's real role title (Team Leader, Officer, etc.) pulled from the Job, not a generic "Day rate" label. If you see "Day rate" on an old invoice, regenerate it.</p>
+      </div>
+    </div>
+
+    <!-- ============ FAQ — Address history ============ -->
+    <div class="wt-step border-assoc" onclick="toggleStep(this)">
+      <div class="wt-step-header">
+        <span class="wt-step-num num-assoc">FAQ</span>
+        <span class="wt-step-title"><i class="fas fa-map-marker-alt me-2"></i>Address history</span>
+        <span class="wt-step-badge badge-assoc">ASSOCIATE</span>
+        <i class="fas fa-chevron-down wt-step-chevron"></i>
+      </div>
+      <div class="wt-step-body">
+        <div class="wt-sub-heading">Why do you need 5 years of address history?</div>
+        <p>DBS and Credit check providers (Verifile uses Experian and Equifax) require a five-year address record to verify the associate's identity reliably. Without it, the checks can't complete or come back with reduced confidence.</p>
+
+        <div class="wt-sub-heading">What if the associate has lived at the same address for 10 years?</div>
+        <p>That's fine &mdash; the associate enters their move-in date as the date they moved into the current address. As long as that date is at least 5 years before today, no previous addresses need to be added. The coverage badge will jump straight to green.</p>
+
+        <div class="wt-sub-heading">Does staff have to enter address history manually?</div>
+        <p>No. The associate enters it themselves on <strong>/portal/personal-details</strong> using the Date you moved in field plus the Previous addresses section. Whatever they enter feeds directly into the candidate-profile Address History tile and the Placement Snapshot. Staff never need to type addresses in.</p>
+
+        <div class="wt-sub-heading">What's the small green tick next to some addresses on the candidate profile?</div>
+        <p>That's the <strong>Verifile Vetting Check</strong> column. When Verifile runs the credit check, the postcodes it confirms come back into OS1 and tick the matching address rows on the Address History tile &mdash; visual confirmation that Verifile and the associate's self-declared history agree.</p>
+      </div>
+    </div>
+
+    <!-- ============ FAQ — Activity feed & audit ============ -->
+    <div class="wt-step border-system" onclick="toggleStep(this)">
+      <div class="wt-step-header">
+        <span class="wt-step-num num-system">FAQ</span>
+        <span class="wt-step-title"><i class="fas fa-stream me-2"></i>Activity feed &amp; audit</span>
+        <span class="wt-step-badge badge-system">SYSTEM</span>
+        <i class="fas fa-chevron-down wt-step-chevron"></i>
+      </div>
+      <div class="wt-step-body">
+        <div class="wt-sub-heading">What appears in the Activity Feed?</div>
+        <p>Everything that happens to a candidate, from both staff and associate sides:</p>
+        <ul class="wt-field-list">
+          <li>Application created / status changed</li>
+          <li>Interview scheduled, completed, outcome recorded</li>
+          <li>Contract sent / signed</li>
+          <li>Every vetting check status change (started, completed, failed, QC reviewed, etc.)</li>
+          <li>Every reference request lifecycle event (created, sent, chased, received, accepted)</li>
+          <li>Every document upload from either side</li>
+          <li>Declaration timestamps (Employment Reference, Secondary Job, Conduct Regs)</li>
+          <li>HMRC record upload</li>
+          <li>Umbrella assignment sent / signed</li>
+          <li>Intro-to-vetting email sent</li>
+          <li>Audit log entries (manual admin overrides, engagement edits, etc.)</li>
+          <li>Notes the associate took on the portal (personal details edits, company details edits, etc.)</li>
+        </ul>
+
+        <div class="wt-sub-heading">An event I expected to see isn't there. Where do I look?</div>
+        <p>The Activity Feed builder is best-effort: a failure on one source doesn't take out the others. If a specific event type is missing for a candidate, it's most likely that the event hasn't been logged for that candidate at all. Cross-check the underlying data &mdash; for example, if "Vetting check completed: DBS Check" isn't showing, look at the Vetting Checks tile to confirm whether the check is actually marked Complete with a completed_at date.</p>
+
+        <div class="wt-sub-heading">Can the Activity Feed be exported for audit?</div>
+        <p>Not directly from the page yet &mdash; the planned next step is an Export button on the candidate profile that pulls the Activity Feed plus the Audit Log plus the Placement Snapshots into a single PDF or CSV. For now, an auditor with admin access can view <strong>/admin/audit-log</strong> for the underlying event stream.</p>
+      </div>
+    </div>
+
+    <!-- ============ FAQ — Interview & calendar ============ -->
+    <div class="wt-step border-integ" onclick="toggleStep(this)">
+      <div class="wt-step-header">
+        <span class="wt-step-num num-integ">FAQ</span>
+        <span class="wt-step-title"><i class="fas fa-calendar-check me-2"></i>Interview &amp; Teams calendar</span>
+        <span class="wt-step-badge badge-integ">INTEGRATION</span>
+        <i class="fas fa-chevron-down wt-step-chevron"></i>
+      </div>
+      <div class="wt-step-body">
+        <div class="wt-sub-heading">Why didn't my interview get a Teams meeting link?</div>
+        <p>Most common cause: the staff member who scheduled the interview was logged in with an account that isn't a real Optimus Microsoft 365 mailbox. Microsoft Graph creates the calendar event in the organiser's mailbox &mdash; if it doesn't recognise the organiser, it falls back to the .ics path. A yellow flash message at the top of the page tells you the exact reason. Try scheduling from a real Optimus mailbox account. Other possible causes: M365_GRAPH_ENABLED is off, the OnlineMeetings.ReadWrite.All Azure permission hasn't been admin-consented, or the Exchange ApplicationAccessPolicy doesn't include the organiser.</p>
+
+        <div class="wt-sub-heading">Where do I see past interviews?</div>
+        <p>The Interview card on the candidate profile shows current-project interviews. Older project interviews appear in the Archive section under that project's card.</p>
+
+        <div class="wt-sub-heading">Can I add multiple attachments to an interview invite?</div>
+        <p>Yes. The Send Interview Email modal has an "Add another file" button that stacks file-input rows &mdash; every selected file goes on the email and (if Graph is connected) on the calendar event itself.</p>
+
+        <div class="wt-sub-heading">The interview email signature shows the wrong contact email.</div>
+        <p>Fixed. Interview emails now explicitly send from associates@optimussolutions.co.uk so the auto-appended logo signature shows the associates@ contact line. The old behaviour was to inherit from whatever SMTP_FROM was on the running environment.</p>
+
+        <div class="wt-sub-heading">The interview template has a duplicate signature (text + logo).</div>
+        <p>Fixed via a server-side strip that removes any trailing "Best/Kind regards…Optimus" block from the EmailTemplate body before the HTML+logo signature is appended. The intended end state is one signature only (the logo one). The clean fix is to edit the EmailTemplate row to remove the text signature too &mdash; the strip is a safety net.</p>
+      </div>
+    </div>
+
+    <!-- ============ FAQ — Statuses & workflow ============ -->
+    <div class="wt-step border-staff" onclick="toggleStep(this)">
+      <div class="wt-step-header">
+        <span class="wt-step-num num-staff">FAQ</span>
+        <span class="wt-step-title"><i class="fas fa-user-tag me-2"></i>Statuses &amp; workflow</span>
+        <span class="wt-step-badge badge-staff">STAFF</span>
+        <i class="fas fa-chevron-down wt-step-chevron"></i>
+      </div>
+      <div class="wt-step-body">
+        <div class="wt-sub-heading">Why does the same person have different statuses in different places?</div>
+        <p>There are three different statuses tracked on each person:</p>
+        <ul class="wt-field-list">
+          <li><span class="field-name">Application status</span> &mdash; the workflow stage of a specific job application (Pipeline, Shortlist, I&amp;A, Offered, Placed, etc.). One per application.</li>
+          <li><span class="field-name">Candidate status</span> &mdash; the overall lifecycle stage (Available, Interviewing, In Vetting, On Assignment, Ex-Associate, etc.). One per person.</li>
+          <li><span class="field-name">Contract status</span> &mdash; the state of the active contract (Issued, Sent, Signed, Ended, Voided). One per contract.</li>
+        </ul>
+        <p>OS1 keeps them in sync &mdash; e.g. moving an application to Placed automatically flips the candidate to On Assignment and the contract to Signed. If you ever see them out of sync, the candidate-profile sidebar tells you the most current state.</p>
+
+        <div class="wt-sub-heading">Why are the workflow action buttons opening new tabs?</div>
+        <p>By design (Req 40). View Profile, View Job, Schedule Interview, Make Offer, Start Referencing, Start Full Vetting, and Issue Contract all open in a new tab so the workflow column stays visible. The tooltips on each button say "(opens in new tab)".</p>
+
+        <div class="wt-sub-heading">Why is Start Full Vetting blocked at certain stages?</div>
+        <p>Start Full Vetting only runs once the candidate's latest application is at Accepted or Offer Accepted. Before that, the button refuses with a message asking staff to advance the application first. This stops vetting from being kicked off speculatively.</p>
+      </div>
+    </div>
+
+  </div>
+
+
+  <!-- ============================================================ -->
+  <!-- SECTION: GLOSSARY                                             -->
+  <!-- ============================================================ -->
+  <div id="section-glossary">
+    <div class="wt-section-header">
+      <div class="icon-circle" style="background: linear-gradient(135deg, #475569, #1e293b);">
+        <i class="fas fa-book-open"></i>
+      </div>
+      <div>
+        <h2>Glossary</h2>
+        <p>Plain-English definitions of the key terms used in OS1.</p>
+      </div>
+    </div>
+
+    <div class="wt-step border-config" onclick="toggleStep(this)">
+      <div class="wt-step-header">
+        <span class="wt-step-num num-config">G</span>
+        <span class="wt-step-title"><i class="fas fa-book me-2"></i>OS1 terms A&ndash;Z</span>
+        <span class="wt-step-badge badge-config">REFERENCE</span>
+        <i class="fas fa-chevron-down wt-step-chevron"></i>
+      </div>
+      <div class="wt-step-body">
+        <table class="wt-detail-table">
+          <tr><th>Term</th><th>What it means</th></tr>
+          <tr><td><strong>Application</strong></td><td>A single candidate applying for a single job. Sits on the workflow board. A person can have multiple applications (different jobs, different projects).</td></tr>
+          <tr><td><strong>Archive</strong></td><td>The collapsible section at the bottom of the candidate profile that holds prior-project vetting, references, interviews, and Placement Snapshots. Read-only. Only shows projects that aren't the candidate's current one.</td></tr>
+          <tr><td><strong>Assignment Schedule</strong></td><td>The document the umbrella company sends the associate confirming their placement terms (client, role, rate, dates). Tracked on the Contract card in the right sidebar of the candidate profile.</td></tr>
+          <tr><td><strong>Associate</strong></td><td>An active or recently-engaged contractor on OS1's books. Same database object as Candidate &mdash; the word changes by lifecycle stage.</td></tr>
+          <tr><td><strong>Candidate</strong></td><td>Someone applying for or being considered for a role. Same database object as Associate &mdash; the word changes by lifecycle stage.</td></tr>
+          <tr><td><strong>Check Still In Date</strong></td><td>A vetting check status set when a prior project's completed check is still inside its expiry window. OS1 auto-carries the previous result so Verifile isn't re-ordered.</td></tr>
+          <tr><td><strong>Client</strong></td><td>The end customer being staffed. A Project (Engagement) belongs to a Client. Clients store default billing details that projects inherit.</td></tr>
+          <tr><td><strong>Conduct Regulations 2003</strong></td><td>The Conduct of Employment Agencies and Employment Businesses Regulations 2003. The associate confirms whether they want to be covered by them per project &mdash; either Opted In or Opted Out.</td></tr>
+          <tr><td><strong>Engagement</strong></td><td>The database name for what the UI calls a Project &mdash; a single piece of work for a Client.</td></tr>
+          <tr><td><strong>HMRC Employment Record</strong></td><td>The completed HMRC New Starter Checklist / employment record the associate uploads on the portal. Replaces the legacy "email it to compliance@" step.</td></tr>
+          <tr><td><strong>I&amp;A</strong></td><td>Interview &amp; Assessment &mdash; the workflow column an application sits in once an interview is scheduled, before the Pass I&amp;A action moves it to Client Review.</td></tr>
+          <tr><td><strong>In-Date Carry-Over</strong></td><td>The mechanism that auto-marks a vetting check as Check Still In Date on a new project when the previous project's result hasn't expired yet.</td></tr>
+          <tr><td><strong>Job</strong></td><td>A role under a Project. A Project can have many Jobs (different role titles, different rates). Applications attach to a specific Job, not directly to the Project.</td></tr>
+          <tr><td><strong>Kanban Card</strong></td><td>The application tile on the workflow board. Shows candidate name, role, vetting badge, referencing badge, quick-action buttons.</td></tr>
+          <tr><td><strong>Lock (on Employment History / Reference)</strong></td><td>A staff-side visual marker (small grey padlock icon) showing a row was part of a previous placement. Informational only &mdash; the associate can still edit the row on their portal at any time; the original is preserved in the snapshot.</td></tr>
+          <tr><td><strong>Package A / Package B (Verifile)</strong></td><td>Bundled Verifile orders that combine DBS + Credit at a lower combined cost. Package A is England &amp; Wales; Package B is Scotland (and includes Right to Work). OS1 picks the right one based on the associate's Scotland-flag answer.</td></tr>
+          <tr><td><strong>Placement</strong></td><td>The event when an application transitions to the Placed status. Triggers the Placement Snapshot + the lock on Employment History and References.</td></tr>
+          <tr><td><strong>Placement Snapshot</strong></td><td>A frozen audit record taken at each Placement event. Captures the declarations, the HMRC link, the address history, and the candidate-level status as of that moment. Surfaced inside the Archive section per project.</td></tr>
+          <tr><td><strong>Pool (Resource Pool)</strong></td><td>The page listing every associate Optimus has on its books with filters by status, vetting state, skills, etc.</td></tr>
+          <tr><td><strong>Project</strong></td><td>The UI label for what the database calls an Engagement &mdash; a single piece of work for a Client.</td></tr>
+          <tr><td><strong>QC</strong></td><td>Quality Control &mdash; the second-pair-of-eyes review every vetting check goes through before it can be marked Complete. Cannot be done by the same person who did the original analyst work.</td></tr>
+          <tr><td><strong>Reference Period</strong></td><td>How many years of employment + address history the project requires. Default 5 years. Set on the project edit page.</td></tr>
+          <tr><td><strong>Resource Pool</strong></td><td>Same as Pool above.</td></tr>
+          <tr><td><strong>Scotland Flag</strong></td><td>The Yes / No answer the associate gives on their Personal Details page to "Is your current home address in Scotland?" Decides which DBS variant Verifile runs and which Verifile package OS1 sends.</td></tr>
+          <tr><td><strong>Signable</strong></td><td>The third-party e-signature provider OS1 integrates with for the Consent Form, Declaration, Secondary Job Declaration, Conduct Regulations decision, and Employment Reference Declaration.</td></tr>
+          <tr><td><strong>SLA (vetting)</strong></td><td>Service Level Agreement &mdash; the 7-day target for completing vetting once it's started. Vetting still In Progress beyond 7 days flags as Out of SLA on the candidate's vetting tile and the kanban card.</td></tr>
+          <tr><td><strong>Umbrella Company</strong></td><td>A payroll intermediary the associate uses (instead of being directly employed). OS1 holds Approved Umbrella Companies as a config list and matches the associate to an Assignment Schedule template per umbrella.</td></tr>
+          <tr><td><strong>Verifile</strong></td><td>The third-party vetting screening provider OS1 integrates with for DBS, Identity, Right to Work, Credit, Sanctions and Social Media checks.</td></tr>
+          <tr><td><strong>Vetting Profile</strong></td><td>A pre-saved set of vetting checks staff can apply to a project with one click instead of ticking individual boxes. Configured on the Configuration page.</td></tr>
+          <tr><td><strong>Workflow Board</strong></td><td>The kanban view at <strong>/workflow</strong> showing every application by stage. Each card is an application; drag-and-drop moves applications between stages.</td></tr>
+        </table>
       </div>
     </div>
 
