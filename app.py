@@ -3589,19 +3589,22 @@ def _reset_consent_and_declarations_for_new_engagement(session, candidate_id, ne
     if hasattr(cand, "conduct_regs_opted_in"):
         cand.conduct_regs_opted_in = None
 
-    # Delete the consent record so the next portal visit prompts a
-    # fresh consent capture. The prior consent is still recorded in
-    # the PlacementSnapshot of the previous placement + via the
-    # consent_signed Document.
-    try:
-        session.execute(
-            text("DELETE FROM consent_records WHERE candidate_id = :cid"),
-            {"cid": candidate_id},
-        )
-    except Exception:
-        current_app.logger.exception(
-            "consent reset: DELETE FROM consent_records failed for cand %s", candidate_id
-        )
+    # Delete the consent + declaration records so the next portal
+    # visit prompts a fresh capture for both. The prior values are
+    # still recorded in the PlacementSnapshot of the previous
+    # placement + via the consent_signed Document, so audit recall
+    # works even after the live values are wiped.
+    for _table in ("consent_records", "declaration_records"):
+        try:
+            session.execute(
+                text(f"DELETE FROM {_table} WHERE candidate_id = :cid"),
+                {"cid": candidate_id},
+            )
+        except Exception:
+            current_app.logger.exception(
+                "consent/declaration reset: DELETE FROM %s failed for cand %s",
+                _table, candidate_id,
+            )
 
     # Activity feed + audit log entries.
     try:
@@ -28029,15 +28032,27 @@ def candidate_profile(cand_id: int):
             # bucket so the archive card can render the declaration +
             # address-history snapshot alongside the vetting / refs /
             # interview rows for that engagement.
+            #
+            # Dedupe: only the LATEST snapshot per engagement is shown.
+            # A candidate can have multiple Placed applications on the
+            # same engagement (different roles, role changes etc.) so
+            # every Application has its own snapshot in the table. The
+            # archive card only needs the freshest one — the older
+            # snapshots stay in the DB for audit but don't render to
+            # avoid visual duplicates in the card.
             try:
                 _snap_rows = _s_arch.scalars(
                     select(PlacementSnapshot)
                     .where(PlacementSnapshot.candidate_id == cand_id)
                     .order_by(PlacementSnapshot.snapshotted_at.desc())
                 ).all()
+                _seen_eng_ids = set()
                 for _snap in _snap_rows:
                     if current_eng_id and _snap.engagement_id == current_eng_id:
                         continue  # current engagement isn't archived
+                    if _snap.engagement_id in _seen_eng_ids:
+                        continue  # newer snapshot already attached for this engagement
+                    _seen_eng_ids.add(_snap.engagement_id)
                     k = _snap.engagement_id
                     bucket = _arch_buckets.setdefault(
                         k, {"vetting": [], "refs": [], "interviews": []}
